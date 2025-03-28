@@ -1,0 +1,41 @@
+{
+    "name": "zx-basic-lsp-client",
+    "displayName": "ZX Basic LSP Client",
+    "description": "Cliente LSP para ZX Basic de Boriel",
+    "version": "1.0.0",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:zx-basic"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "zxbasic",
+                "aliases": [
+                    "ZX Basic",
+                    "zx-basic"
+                ],
+                "extensions": [
+                    ".bas"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "zxbasic",
+                "scopeName": "source.zxbasic",
+                "path": "./zxbasic.tmLanguage.json"
+            }
+        ]
+    },
+    "dependencies": {
+        "vscode-languageclient": "^8.1.0"
+    }
+}

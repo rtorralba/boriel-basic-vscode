@@ -1,0 +1,39 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+logs/
+*.log
+*.log.*
+log/
+
+# Editor y sistema operativo
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Build y salida
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+
+# Archivos temporales
+*.tmp
+*.temp
+*.bak
+
+# Configuración local
+.env
+.env.local
+.env.*.local
