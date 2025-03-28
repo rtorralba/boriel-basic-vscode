@@ -17,7 +17,7 @@ function formatZXBasicCode(document) {
         console.log('Línea:', i, 'Indentación:', indentLevel, 'Texto:', trimmedLine);
 
         // Reducir nivel de indentación para palabras clave de cierre
-        if (/^\s*(END SUB|END FUNCTION|END IF|NEXT|WEND|LOOP)\b/i.test(trimmedLine)) {
+        if (/^\s*(END SUB|END FUNCTION|END IF|NEXT|WEND|LOOP|END ASM|#ENDIF)\b/i.test(trimmedLine)) {
             indentLevel = Math.max(0, indentLevel - 1);
         }
 
@@ -32,7 +32,7 @@ function formatZXBasicCode(document) {
         }
 
         // Aumentar nivel de indentación para palabras clave de apertura
-        if (/^\s*(SUB|FUNCTION|IF|FOR|WHILE|DO)\b/i.test(trimmedLine)) {
+        if (/^\s*(SUB|FUNCTION|IF|FOR|WHILE|DO|ASM#IF)\b/i.test(trimmedLine)) {
             indentLevel++;
         }
     });

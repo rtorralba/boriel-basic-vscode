@@ -103,11 +103,11 @@ function analyzeFileForDefinitions(filePath, uri) {
             return;
         }
 
-        // Detectar definiciones (SUB o FUNCTION)
-        const definitionMatch = /^\s*(SUB|FUNCTION)\s+([a-zA-Z_][a-zA-Z0-9_]*)/i.exec(trimmedLine);
+        // Detectar definiciones (SUB o FUNCTION, con o sin FASTCALL, con o sin parámetros)
+        const definitionMatch = /^\s*(SUB|FUNCTION)\s+(FASTCALL\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(.*\)/i.exec(trimmedLine);
         if (definitionMatch) {
-            const type = definitionMatch[1]; // SUB o FUNCTION
-            const name = definitionMatch[2];
+            const type = definitionMatch[1].toUpperCase(); // SUB o FUNCTION
+            const name = definitionMatch[3]; // Nombre de la función o subrutina
             console.log(`Definición encontrada: ${type} ${name} en ${filePath}, línea ${i + 1}`);
             globalDefinitions.set(name, Location.create(uri, Range.create(i, 0, i, trimmedLine.length)));
         }

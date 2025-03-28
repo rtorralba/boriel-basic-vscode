@@ -103,51 +103,7 @@ connection.onInitialize(() => {
 const { watchBasicFiles } = require('./watcher');
 watchBasicFiles();
 
-// Función para validar documentos ZX Basic
-function validateZXBasic(document) {
-    const text = document.getText();
-    const diagnostics = [];
-
-    // Ejemplo: Detectar errores básicos de sintaxis
-    const lines = text.split(/\r?\n/);
-    lines.forEach((line, i) => {
-        const trimmedLine = line.trim();
-
-        // Detectar líneas vacías o mal formateadas
-        if (trimmedLine === '') {
-            diagnostics.push({
-                range: Range.create(i, 0, i, line.length),
-                message: 'Línea vacía detectada.',
-                severity: DiagnosticSeverity.Information
-            });
-        }
-
-        // Detectar palabras reservadas mal escritas (ejemplo: "pritn" en lugar de "print")
-        if (/pritn/i.test(trimmedLine)) {
-            diagnostics.push({
-                range: Range.create(i, trimmedLine.indexOf('pritn'), i, trimmedLine.indexOf('pritn') + 5),
-                message: '¿Quisiste decir "PRINT"?',
-                severity: DiagnosticSeverity.Warning
-            });
-        }
-
-        // Detectar errores comunes en ZX Basic (ejemplo: falta de "END")
-        if (/^\s*if\s+.+\s+then\s*$/i.test(trimmedLine) && !/end\s*if/i.test(text)) {
-            diagnostics.push({
-                range: Range.create(i, 0, i, line.length),
-                message: 'Falta "END IF" para esta estructura condicional.',
-                severity: DiagnosticSeverity.Error
-            });
-        }
-    });
-
-    // Enviar diagnósticos al cliente
-    connection.sendDiagnostics({
-        uri: document.uri,
-        version: document.version,
-        diagnostics
-    });
-}
+const { validateZXBasic } = require('./validator');
 
 // Validar documentos al abrir o cambiar contenido
 documents.onDidOpen((event) => {
