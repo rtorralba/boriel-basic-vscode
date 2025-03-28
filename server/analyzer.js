@@ -18,6 +18,11 @@ function analyzeFile(filePath, uri) {
     lines.forEach((line, i) => {
         const trimmedLine = line.trim();
 
+        // Ignorar líneas que son comentarios o están dentro de cadenas de texto
+        if (trimmedLine.startsWith("'") || trimmedLine.startsWith('"')) {
+            return;
+        }
+
         // Detectar definiciones (SUB o FUNCTION)
         const definitionMatch = /^\s*(SUB|FUNCTION)\s+([a-zA-Z_][a-zA-Z0-9_]*)/i.exec(trimmedLine);
         if (definitionMatch) {
@@ -27,17 +32,20 @@ function analyzeFile(filePath, uri) {
             globalDefinitions.set(name, Location.create(uri, Range.create(i, 0, i, trimmedLine.length)));
         }
 
-        // Detectar referencias (uso de identificadores)
-        const words = trimmedLine.split(/\s+/).map(word => word.replace(/[^\w]/g, ''));
-        console.log(`Palabras detectadas en la línea ${i + 1}:`, words);
+        // Detectar referencias (llamadas a funciones o subrutinas)
+        globalDefinitions.forEach((_, name) => {
+            // Patrón para llamadas a funciones (nombre seguido de un paréntesis)
+            const callPattern = new RegExp(`\\b${name}\\s*\\(`, 'i');
+            // Patrón para subrutinas (nombre en una línea sin paréntesis, pero no dentro de cadenas de texto o comentarios)
+            const subPattern = new RegExp(`\\b${name}\\b(?!\\s*\\()`, 'i');
 
-        words.forEach((word) => {
-            if (globalDefinitions.has(word)) {
-                if (!globalReferences.has(word)) {
-                    globalReferences.set(word, []);
+            // Verificar si la línea contiene una llamada válida
+            if (callPattern.test(trimmedLine) || (subPattern.test(trimmedLine) && !trimmedLine.includes('"') && !trimmedLine.startsWith("'"))) {
+                if (!globalReferences.has(name)) {
+                    globalReferences.set(name, []);
                 }
-                console.log(`Referencia encontrada: ${word} en ${filePath}, línea ${i + 1}`);
-                globalReferences.get(word).push(Location.create(uri, Range.create(i, 0, i, trimmedLine.length)));
+                console.log(`Referencia encontrada: ${name} en ${filePath}, línea ${i + 1}`);
+                globalReferences.get(name).push(Location.create(uri, Range.create(i, 0, i, trimmedLine.length)));
             }
         });
     });
@@ -64,15 +72,74 @@ function analyzeProjectFiles() {
 
     console.log('Archivos encontrados:', files);
 
+    // Primer pase: analizar definiciones
     files.forEach((file) => {
         const uri = `file://${file}`;
-        console.log(`Analizando archivo: ${file}`);
-        analyzeFile(file, uri);
+        console.log(`Analizando definiciones en archivo: ${file}`);
+        analyzeFileForDefinitions(file, uri);
+    });
+
+    // Segundo pase: analizar referencias
+    files.forEach((file) => {
+        const uri = `file://${file}`;
+        console.log(`Analizando referencias en archivo: ${file}`);
+        analyzeFileForReferences(file, uri);
     });
 
     console.log('Análisis inicial completado');
     console.log('Definiciones globales:', Array.from(globalDefinitions.keys()));
     console.log('Referencias globales:', Array.from(globalReferences.keys()));
+}
+
+function analyzeFileForDefinitions(filePath, uri) {
+    const text = fs.readFileSync(filePath, 'utf8');
+    const lines = text.split(/\r?\n/);
+
+    lines.forEach((line, i) => {
+        const trimmedLine = line.trim();
+
+        // Ignorar líneas que son comentarios o están dentro de cadenas de texto
+        if (trimmedLine.startsWith("'") || trimmedLine.startsWith('"')) {
+            return;
+        }
+
+        // Detectar definiciones (SUB o FUNCTION)
+        const definitionMatch = /^\s*(SUB|FUNCTION)\s+([a-zA-Z_][a-zA-Z0-9_]*)/i.exec(trimmedLine);
+        if (definitionMatch) {
+            const type = definitionMatch[1]; // SUB o FUNCTION
+            const name = definitionMatch[2];
+            console.log(`Definición encontrada: ${type} ${name} en ${filePath}, línea ${i + 1}`);
+            globalDefinitions.set(name, Location.create(uri, Range.create(i, 0, i, trimmedLine.length)));
+        }
+    });
+}
+
+function analyzeFileForReferences(filePath, uri) {
+    const text = fs.readFileSync(filePath, 'utf8');
+    const lines = text.split(/\r?\n/);
+
+    lines.forEach((line, i) => {
+        const trimmedLine = line.trim();
+
+        // Ignorar líneas que son comentarios o están dentro de cadenas de texto
+        if (trimmedLine.startsWith("'") || trimmedLine.startsWith('"')) {
+            return;
+        }
+
+        // Detectar referencias (llamadas a funciones o subrutinas)
+        globalDefinitions.forEach((_, name) => {
+            const callPattern = new RegExp(`\\b${name}\\s*\\(`, 'i');
+            const subPattern = new RegExp(`\\b${name}\\b(?!\\s*\\()`, 'i');
+
+            if (callPattern.test(trimmedLine) || (subPattern.test(trimmedLine) && !trimmedLine.includes('"') && !trimmedLine.startsWith("'"))) {
+                if (!globalReferences.has(name)) {
+                    globalReferences.set(name, []);
+                }
+                console.log(`Referencia encontrada: ${name} en ${filePath}, línea ${i + 1}`);
+                globalReferences.get(name).push(Location.create(uri, Range.create(i, 0, i, trimmedLine.length)));
+            }
+        });
+    });
 }
 
 module.exports = {
