@@ -18,7 +18,6 @@ FUNCTION test() AS STRING
     RETURN "Hello World"
 END FUNCTION
 
-
 test = test()
 
 sprites = sprites()

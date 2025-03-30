@@ -1,8 +1,18 @@
 {
+    "homepage": "https://github.com/rtorralba/zx-basic-vscode#readme",
     "name": "zx-basic-lsp-client",
     "displayName": "ZX Basic LSP Client",
     "description": "Cliente LSP para ZX Basic de Boriel",
     "version": "1.0.0",
+    "author": "Raül Torralba (Juntelart)",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/rtorralba/zx-basic-vscode.git"
+    },
+    "bugs": {
+      "url": "https://github.com/rtorralba/zx-basic-vscode/issues"
+    },
     "engines": {
         "vscode": "^1.75.0"
     },
@@ -37,6 +47,7 @@
     },
     "dependencies": {
         "ignore": "^7.0.3",
-        "vscode-languageclient": "^8.1.0"
+        "vscode-languageclient": "^8.1.0",
+        "zx-basic-lsp": "^1.0.1"
     }
 }

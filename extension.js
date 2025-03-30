@@ -8,8 +8,33 @@ const {
 let client;
 
 function activate(context) {
-    // Ruta al servidor LSP
-    const serverModule = context.asAbsolutePath(path.join('server/zxBasicServer.js'));
+    let serverModule;
+
+    // Intentar resolver el módulo zx-basic-lsp localmente
+    try {
+        serverModule = require.resolve('zx-basic-lsp');
+        console.log('Ruta del servidor LSP (local):', serverModule);
+    } catch (error) {
+        console.error('Error al resolver zx-basic-lsp localmente:', error);
+
+        // Si no se encuentra localmente, buscar en las dependencias globales
+        try {
+            const globalNodeModules = child_process.execSync('npm root -g').toString().trim();
+            serverModule = path.join(globalNodeModules, 'zx-basic-lsp');
+            console.log('Ruta del servidor LSP (global):', serverModule);
+
+            // Verificar si el módulo existe en la ruta global
+            require.resolve(serverModule);
+        } catch (globalError) {
+            console.error('Error al resolver zx-basic-lsp globalmente:', globalError);
+        }
+    }
+
+    console.log('Ruta del servidor LSP:', serverModule);
+
+    if (!serverModule) {
+        throw new Error('No se pudo resolver el módulo zx-basic-lsp. Asegúrate de que esté instalado.');
+    }
 
     // Obtener la carpeta del espacio de trabajo activo
     const workspaceFolders = vscode.workspace.workspaceFolders;
