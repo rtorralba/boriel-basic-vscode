@@ -4,10 +4,84 @@ const {
     LanguageClient,
     TransportKind
 } = require('vscode-languageclient/node');
+const child_process = require('child_process');
+const fs = require('fs');
 
 let client;
 
+function compileZXBasic() {
+    // Obtener configuraciones del usuario
+    const config = vscode.workspace.getConfiguration('zxBasic');
+    const mainFile = config.get('mainFile');
+    const optimizeLevel = config.get('optimizeLevel');
+    const outputFormat = config.get('outputFormat');
+    const autorun = config.get('autorun');
+    const org = config.get('org');
+    const includeBasicLoader = config.get('includeBasicLoader');
+    const heapSize = config.get('heapSize');
+
+    // Obtener el archivo activo
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showErrorMessage('No hay ningún archivo abierto para compilar.');
+        return;
+    }
+
+    // Comprobar el sistema operativo para ejecutar bin/zxbc.exe .linix o .macos
+
+    if (process.platform === 'win32') {
+        // Windows
+        console.log('Compilando en Windows');
+        bin = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbc.exe');
+    }
+    else if (process.platform === 'linux') {    
+        // Linux
+        console.log('Compilando en Linux');
+        bin = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbc');
+    }
+    else if (process.platform === 'darwin') {
+        // MacOS
+        console.log('Compilando en MacOS');
+        bin = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbc');
+    }
+
+    // Comprobar si existe la carpeta dist y si no crearla
+    const workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    const distFolder = path.join(workspaceFolder, 'dist');
+    if (!fs.existsSync(distFolder)) {
+        fs.mkdirSync(distFolder);
+    }
+
+    outputFile = path.join("dist", path.basename(mainFile, '.bas') + (outputFormat === 'tap' ? '.tap' : '.bin'));
+
+    // Construir el comando de compilación
+    const args = [
+        `-O=${optimizeLevel}`,
+        `-S=${org}`,
+        `-H=${heapSize}`,
+        includeBasicLoader ? '-B' : '',
+        autorun ? '-a' : '',
+        outputFormat === 'tap' ? '-t' : '-T',
+    ].filter(arg => arg !== ''); // Eliminar argumentos vacíos
+
+    const command = `${bin} ${args.join(' ')} ${mainFile} -o ${outputFile}`;
+    console.log(`Ejecutando comando: ${command}`);
+
+    // Ejecutar el comando
+    child_process.exec(command, { cwd: workspaceFolder }, (error, stdout, stderr) => {
+        if (error) {
+            vscode.window.showErrorMessage(`Error al compilar: ${stderr}`);
+            console.error(`Error: ${stderr}`);
+            return;
+        }
+
+        vscode.window.showInformationMessage(`Compilación completada: ${outputFile}`);
+        console.log(`Salida: ${stdout}`);
+    });
+}
+
 function activate(context) {
+    console.log('La extensión ZX Basic LSP Client se ha activado.');
     let serverModule;
 
     // Intentar resolver el módulo zx-basic-lsp localmente
@@ -72,6 +146,13 @@ function activate(context) {
 
     // Iniciar el cliente
     client.start();
+
+    // Registrar el comando "zxBasic.compile"
+    const compileCommand = vscode.commands.registerCommand('zxBasic.compile', () => {
+        compileZXBasic();
+    });
+
+    context.subscriptions.push(compileCommand);
 }
 
 function deactivate() {

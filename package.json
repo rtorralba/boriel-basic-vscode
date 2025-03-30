@@ -20,7 +20,7 @@
         "Programming Languages"
     ],
     "activationEvents": [
-        "onLanguage:zx-basic"
+        "onLanguage:zxbasic"
     ],
     "main": "./extension.js",
     "contributes": {
@@ -43,8 +43,60 @@
                 "scopeName": "source.zxbasic",
                 "path": "./zxbasic.tmLanguage.json"
             }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "ZX Basic Configuration",
+            "properties": {
+                "zxBasic.mainFile": {
+                    "type": "string",
+                    "default": "main.bas",
+                    "description": "Archivo principal del proyecto a compilar."
+                },
+                "zxBasic.optimizeLevel": {
+                    "type": "integer",
+                    "default": 2,
+                    "minimum": 0,
+                    "maximum": 4,
+                    "description": "Nivel de optimización (0-4)."
+                },
+                "zxBasic.outputFormat": {
+                    "type": "string",
+                    "default": "tap",
+                    "enum": ["tap", "tzx"],
+                    "description": "Formato de salida (tap o tzx)."
+                },
+                "zxBasic.autorun": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Ejecutar automáticamente el programa después de compilar."
+                },
+                "zxBasic.org": {
+                    "type": "integer",
+                    "default": 32768,
+                    "description": "Dirección ORG (inicio del código máquina)."
+                },
+                "zxBasic.includeBasicLoader": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Incluir el cargador BASIC en el programa."
+                },
+                "zxBasic.heapSize": {
+                    "type": "integer",
+                    "default": 4768,
+                    "description": "Tamaño del HEAP en bytes."
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "zxBasic.compile",
+                "title": "Compilar ZX Basic",
+                "category": "ZX Basic"
+            }
         ]
     },
+    "icon": "images/logo.jpg",
     "dependencies": {
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0",
