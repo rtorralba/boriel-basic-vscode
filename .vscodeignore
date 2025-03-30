@@ -1,0 +1,16 @@
+# Excluir archivos innecesarios
+*.log
+*.tmp
+*.temp
+*.ts
+*.map
+.vscode/
+test/
+tests/
+coverage/
+dist/
+
+# Incluir node_modules pero excluir dependencias de desarrollo
+node_modules/
+!node_modules/vscode-languageclient/
+!node_modules/zx-basic-lsp/

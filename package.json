@@ -1,8 +1,8 @@
 {
     "homepage": "https://github.com/rtorralba/zx-basic-vscode#readme",
-    "name": "zx-basic-lsp-client",
-    "displayName": "ZX Basic LSP Client",
-    "description": "Cliente LSP para ZX Basic de Boriel",
+    "name": "zx-basic",
+    "displayName": "ZX Basic",
+    "description": "Programming language support for ZX Basic, a BASIC compiler for the ZX Spectrum.",
     "version": "1.0.0",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
