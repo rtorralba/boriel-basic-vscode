@@ -6,6 +6,7 @@
     "version": "1.0.0",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
+    "publisher": "rtorralba",
     "repository": {
       "type": "git",
       "url": "https://github.com/rtorralba/zx-basic-vscode.git"
