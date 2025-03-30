@@ -3,7 +3,7 @@
     "name": "zx-basic",
     "displayName": "ZX Basic",
     "description": "Programming language support for ZX Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
     "publisher": "rtorralba",

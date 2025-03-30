@@ -26,9 +26,10 @@ La extensión **ZX Basic VSCode** está diseñada para facilitar el desarrollo d
 3. Usa los comandos disponibles en la paleta de comandos (`Ctrl+Shift+P` o `Cmd+Shift+P`) para compilar o ejecutar tu programa.
 4. Visualiza los resultados en el emulador o revisa los errores en la consola.
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/kRisOZiohL0?si=tc58zJQV8LMkkXlO" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
 ## Requisitos
 
-- Tener instalado el compilador ZX Basic. Puedes descargarlo desde [ZX Basic Compiler](http://www.zxbasic.net/).
 - Opcional: Un emulador compatible con ZX Spectrum para probar tus programas.
 
 ## Contribuciones

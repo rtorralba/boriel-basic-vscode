@@ -1,4 +1,4 @@
-include "message.bas"
+#include "message.bas"
 
 helloWorld()
 

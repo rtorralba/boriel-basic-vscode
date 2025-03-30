@@ -1,4 +1,4 @@
 SUB helloWorld()
     ' This is a simple subroutine that prints "Hello, World!" to the console.
-    print "Hello, World!"
+    PRINT "Hello, World!"
 END SUB
