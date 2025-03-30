@@ -94,6 +94,11 @@
                 "command": "zxBasic.compile",
                 "title": "Compilar ZX Basic",
                 "category": "ZX Basic"
+            },
+            {
+                "command": "zxBasic.updateLSP",
+                "title": "Actualizar ZX Basic LSP",
+                "category": "ZX Basic"
             }
         ]
     },

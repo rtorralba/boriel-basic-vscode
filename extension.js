@@ -34,7 +34,7 @@ function compileZXBasic() {
         console.log('Compilando en Windows');
         bin = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbc.exe');
     }
-    else if (process.platform === 'linux') {    
+    else if (process.platform === 'linux') {
         // Linux
         console.log('Compilando en Linux');
         bin = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbc');
@@ -80,8 +80,31 @@ function compileZXBasic() {
     });
 }
 
+function updateLSP() {
+    vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: "Actualizando ZX Basic LSP...",
+            cancellable: false
+        },
+        async (progress) => {
+            try {
+                progress.report({ message: "Ejecutando npm install -g zx-basic-lsp..." });
+
+                // Ejecutar el comando para actualizar el LSP
+                const result = child_process.execSync('npm install -g zx-basic-lsp', { encoding: 'utf-8' });
+                console.log(result);
+
+                vscode.window.showInformationMessage("ZX Basic LSP actualizado correctamente.");
+            } catch (error) {
+                console.error("Error al actualizar ZX Basic LSP:", error);
+                vscode.window.showErrorMessage(`Error al actualizar ZX Basic LSP: ${error.message}`);
+            }
+        }
+    );
+}
+
 function activate(context) {
-    console.log('La extensión ZX Basic LSP Client se ha activado.');
     let serverModule;
 
     // Intentar resolver el módulo zx-basic-lsp localmente
@@ -150,6 +173,11 @@ function activate(context) {
     // Registrar el comando "zxBasic.compile"
     const compileCommand = vscode.commands.registerCommand('zxBasic.compile', () => {
         compileZXBasic();
+    });
+
+    // Registrar el comando "zxBasic.updateLSP"
+    const updateLSPCommand = vscode.commands.registerCommand('zxBasic.updateLSP', () => {
+        updateLSP();
     });
 
     context.subscriptions.push(compileCommand);
