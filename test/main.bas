@@ -1,3 +1,5 @@
-print "hello world"
+include "message.bas"
+
+helloWorld()
 
 stop
