@@ -37,3 +37,5 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+*.vsix
