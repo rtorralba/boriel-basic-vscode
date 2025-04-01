@@ -9,9 +9,9 @@ const fs = require('fs');
 
 let client;
 
-function compileZXBasic() {
+function compileBorielBasic() {
     // Obtener configuraciones del usuario
-    const config = vscode.workspace.getConfiguration('zxBasic');
+    const config = vscode.workspace.getConfiguration('borielBasic');
     const mainFile = config.get('mainFile');
     const optimizeLevel = config.get('optimizeLevel');
     const outputFormat = config.get('outputFormat');
@@ -84,21 +84,21 @@ function updateLSP() {
     vscode.window.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
-            title: "Actualizando ZX Basic LSP...",
+            title: "Actualizando Boriel Basic LSP...",
             cancellable: false
         },
         async (progress) => {
             try {
-                progress.report({ message: "Ejecutando npm install -g zx-basic-lsp..." });
+                progress.report({ message: "Ejecutando npm install -g boriel-basic-lsp..." });
 
                 // Ejecutar el comando para actualizar el LSP
-                const result = child_process.execSync('npm install -g zx-basic-lsp', { encoding: 'utf-8' });
+                const result = child_process.execSync('npm install -g boriel-basic-lsp', { encoding: 'utf-8' });
                 console.log(result);
 
-                vscode.window.showInformationMessage("ZX Basic LSP actualizado correctamente.");
+                vscode.window.showInformationMessage("Boriel Basic LSP actualizado correctamente.");
             } catch (error) {
-                console.error("Error al actualizar ZX Basic LSP:", error);
-                vscode.window.showErrorMessage(`Error al actualizar ZX Basic LSP: ${error.message}`);
+                console.error("Error al actualizar Boriel Basic LSP:", error);
+                vscode.window.showErrorMessage(`Error al actualizar Boriel Basic LSP: ${error.message}`);
             }
         }
     );
@@ -107,30 +107,30 @@ function updateLSP() {
 function activate(context) {
     let serverModule;
 
-    // Intentar resolver el módulo zx-basic-lsp localmente
+    // Intentar resolver el módulo boriel-basic-lsp localmente
     try {
-        serverModule = require.resolve('zx-basic-lsp');
+        serverModule = require.resolve('boriel-basic-lsp');
         console.log('Ruta del servidor LSP (local):', serverModule);
     } catch (error) {
-        console.error('Error al resolver zx-basic-lsp localmente:', error);
+        console.error('Error al resolver boriel-basic-lsp localmente:', error);
 
         // Si no se encuentra localmente, buscar en las dependencias globales
         try {
             const globalNodeModules = child_process.execSync('npm root -g').toString().trim();
-            serverModule = path.join(globalNodeModules, 'zx-basic-lsp');
+            serverModule = path.join(globalNodeModules, 'boriel-basic-lsp');
             console.log('Ruta del servidor LSP (global):', serverModule);
 
             // Verificar si el módulo existe en la ruta global
             require.resolve(serverModule);
         } catch (globalError) {
-            console.error('Error al resolver zx-basic-lsp globalmente:', globalError);
+            console.error('Error al resolver boriel-basic-lsp globalmente:', globalError);
         }
     }
 
     console.log('Ruta del servidor LSP:', serverModule);
 
     if (!serverModule) {
-        throw new Error('No se pudo resolver el módulo zx-basic-lsp. Asegúrate de que esté instalado.');
+        throw new Error('No se pudo resolver el módulo boriel-basic-lsp. Asegúrate de que esté instalado.');
     }
 
     // Obtener la carpeta del espacio de trabajo activo
@@ -153,7 +153,7 @@ function activate(context) {
 
     // Opciones del cliente
     const clientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'zxbasic' }],
+        documentSelector: [{ scheme: 'file', language: 'borielbasic' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.bas')
         }
@@ -161,8 +161,8 @@ function activate(context) {
 
     // Crear el cliente LSP
     client = new LanguageClient(
-        'zxBasicLanguageServer',
-        'ZX Basic Language Server',
+        'borielBasicLanguageServer',
+        'Boriel Basic Language Client',
         serverOptions,
         clientOptions
     );
@@ -170,13 +170,13 @@ function activate(context) {
     // Iniciar el cliente
     client.start();
 
-    // Registrar el comando "zxBasic.compile"
-    const compileCommand = vscode.commands.registerCommand('zxBasic.compile', () => {
-        compileZXBasic();
+    // Registrar el comando "borielBasic.compile"
+    const compileCommand = vscode.commands.registerCommand('borielBasic.compile', () => {
+        compileBorielBasic();
     });
 
-    // Registrar el comando "zxBasic.updateLSP"
-    const updateLSPCommand = vscode.commands.registerCommand('zxBasic.updateLSP', () => {
+    // Registrar el comando "borielBasic.updateLSP"
+    const updateLSPCommand = vscode.commands.registerCommand('borielBasic.updateLSP', () => {
         updateLSP();
     });
 

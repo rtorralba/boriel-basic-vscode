@@ -1,28 +1,28 @@
-# ZX Basic VSCode Extension
+# Boriel Basic VSCode Extension
 
 ## Descripción
 
-La extensión **ZX Basic VSCode** está diseñada para facilitar el desarrollo de programas en el lenguaje ZX Basic dentro del editor Visual Studio Code. ZX Basic es un compilador que permite crear software para computadoras retro como el ZX Spectrum, proporcionando una experiencia de programación moderna para plataformas clásicas.
+La extensión **Boriel Basic VSCode** está diseñada para facilitar el desarrollo de programas en el lenguaje Boriel Basic dentro del editor Visual Studio Code. Boriel Basic es un compilador que permite crear software para computadoras retro como el ZX Spectrum, proporcionando una experiencia de programación moderna para plataformas clásicas.
 
 ## Funcionalidades
 
-- **Resaltado de sintaxis**: Mejora la legibilidad del código ZX Basic con colores específicos para palabras clave, comentarios y estructuras del lenguaje.
-- **Compilación integrada**: Compila directamente tus archivos `.bas` desde VSCode utilizando el compilador ZX Basic.
+- **Resaltado de sintaxis**: Mejora la legibilidad del código Boriel Basic con colores específicos para palabras clave, comentarios y estructuras del lenguaje.
+- **Compilación integrada**: Compila directamente tus archivos `.bas` desde VSCode utilizando el compilador Boriel Basic.
 - **Ejecución rápida**: Ejecuta tus programas en un emulador compatible con un solo clic.
-- **Autocompletado**: Sugerencias inteligentes para comandos y funciones del lenguaje ZX Basic.
+- **Autocompletado**: Sugerencias inteligentes para comandos y funciones del lenguaje Boriel Basic.
 - **Errores en tiempo de compilación**: Visualiza errores y advertencias directamente en el editor.
-- **Soporte para proyectos**: Organiza y gestiona proyectos ZX Basic de manera eficiente.
+- **Soporte para proyectos**: Organiza y gestiona proyectos Boriel Basic de manera eficiente.
 
 ## Instalación
 
 1. Descarga e instala [Visual Studio Code](https://code.visualstudio.com/).
-2. Busca "ZX Basic" en la sección de extensiones de VSCode.
+2. Busca "Boriel Basic" en la sección de extensiones de VSCode.
 3. Instala la extensión y reinicia el editor si es necesario.
 
 ## Uso
 
 1. Abre un archivo `.bas` o crea uno nuevo.
-2. Escribe tu código en ZX Basic.
+2. Escribe tu código en Boriel Basic.
 3. Usa los comandos disponibles en la paleta de comandos (`Ctrl+Shift+P` o `Cmd+Shift+P`) para compilar o ejecutar tu programa.
 4. Visualiza los resultados en el emulador o revisa los errores en la consola.
 

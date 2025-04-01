@@ -23,3 +23,9 @@ test = test()
 sprites = sprites()
 
 tiles()
+
+IF sprites
+    PRINT "Sprites are enabled"
+ELSE
+    PRINT "Sprites are disabled"
+END IF

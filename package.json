@@ -1,18 +1,18 @@
 {
-    "homepage": "https://github.com/rtorralba/zx-basic-vscode#readme",
-    "name": "zx-basic",
-    "displayName": "ZX Basic",
-    "description": "Programming language support for ZX Basic, a BASIC compiler for the ZX Spectrum.",
+    "homepage": "https://github.com/rtorralba/boriel-basic-vscode#readme",
+    "name": "boriel-basic",
+    "displayName": "Boriel Basic",
+    "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
     "version": "1.0.3",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
     "publisher": "rtorralba",
     "repository": {
       "type": "git",
-      "url": "https://github.com/rtorralba/zx-basic-vscode.git"
+      "url": "https://github.com/rtorralba/boriel-basic-vscode.git"
     },
     "bugs": {
-      "url": "https://github.com/rtorralba/zx-basic-vscode/issues"
+      "url": "https://github.com/rtorralba/boriel-basic-vscode/issues"
     },
     "engines": {
         "vscode": "^1.75.0"
@@ -21,16 +21,16 @@
         "Programming Languages"
     ],
     "activationEvents": [
-        "onLanguage:zxbasic"
+        "onLanguage:borielbasic"
     ],
     "main": "./extension.js",
     "contributes": {
         "languages": [
             {
-                "id": "zxbasic",
+                "id": "borielbasic",
                 "aliases": [
-                    "ZX Basic",
-                    "zx-basic"
+                    "Boriel Basic",
+                    "boriel-basic"
                 ],
                 "extensions": [
                     ".bas"
@@ -40,49 +40,49 @@
         ],
         "grammars": [
             {
-                "language": "zxbasic",
-                "scopeName": "source.zxbasic",
-                "path": "./zxbasic.tmLanguage.json"
+                "language": "borielbasic",
+                "scopeName": "source.borielbasic",
+                "path": "./borielbasic.tmLanguage.json"
             }
         ],
         "configuration": {
             "type": "object",
-            "title": "ZX Basic Configuration",
+            "title": "Boriel Basic Configuration",
             "properties": {
-                "zxBasic.mainFile": {
+                "borielBasic.mainFile": {
                     "type": "string",
                     "default": "main.bas",
                     "description": "Archivo principal del proyecto a compilar."
                 },
-                "zxBasic.optimizeLevel": {
+                "borielBasic.optimizeLevel": {
                     "type": "integer",
                     "default": 2,
                     "minimum": 0,
                     "maximum": 4,
                     "description": "Nivel de optimización (0-4)."
                 },
-                "zxBasic.outputFormat": {
+                "borielBasic.outputFormat": {
                     "type": "string",
                     "default": "tap",
                     "enum": ["tap", "tzx"],
                     "description": "Formato de salida (tap o tzx)."
                 },
-                "zxBasic.autorun": {
+                "borelBasic.autorun": {
                     "type": "boolean",
                     "default": true,
                     "description": "Ejecutar automáticamente el programa después de compilar."
                 },
-                "zxBasic.org": {
+                "borelBasic.org": {
                     "type": "integer",
                     "default": 32768,
                     "description": "Dirección ORG (inicio del código máquina)."
                 },
-                "zxBasic.includeBasicLoader": {
+                "borielBasic.includeBasicLoader": {
                     "type": "boolean",
                     "default": true,
                     "description": "Incluir el cargador BASIC en el programa."
                 },
-                "zxBasic.heapSize": {
+                "borelBasic.heapSize": {
                     "type": "integer",
                     "default": 4768,
                     "description": "Tamaño del HEAP en bytes."
@@ -91,14 +91,14 @@
         },
         "commands": [
             {
-                "command": "zxBasic.compile",
-                "title": "Compilar ZX Basic",
-                "category": "ZX Basic"
+                "command": "borielBasic.compile",
+                "title": "Compilar Boriel Basic",
+                "category": "Boriel Basic"
             },
             {
-                "command": "zxBasic.updateLSP",
-                "title": "Actualizar ZX Basic LSP",
-                "category": "ZX Basic"
+                "command": "borelBasic.updateLSP",
+                "title": "Actualizar Boriel Basic LSP",
+                "category": "Borel Basic"
             }
         ]
     },
@@ -106,6 +106,6 @@
     "dependencies": {
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0",
-        "zx-basic-lsp": "^1.0.1"
+        "boriel-basic-lsp": "^1.0.1"
     }
 }
