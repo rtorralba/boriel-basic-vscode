@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
     "publisher": "rtorralba",
@@ -67,12 +67,12 @@
                     "enum": ["tap", "tzx"],
                     "description": "Formato de salida (tap o tzx)."
                 },
-                "borelBasic.autorun": {
+                "borielBasic.autorun": {
                     "type": "boolean",
                     "default": true,
                     "description": "Ejecutar automáticamente el programa después de compilar."
                 },
-                "borelBasic.org": {
+                "borielBasic.org": {
                     "type": "integer",
                     "default": 32768,
                     "description": "Dirección ORG (inicio del código máquina)."
@@ -82,7 +82,7 @@
                     "default": true,
                     "description": "Incluir el cargador BASIC en el programa."
                 },
-                "borelBasic.heapSize": {
+                "borielBasic.heapSize": {
                     "type": "integer",
                     "default": 4768,
                     "description": "Tamaño del HEAP en bytes."
