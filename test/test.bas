@@ -1,22 +1,22 @@
-#INCLUDE <keys.bas>
+#include <keys.bas>
 
-CLS
+Cls
 
-PRINT "Press any key TO continue"
+Print "Press any key To continue"
 
-DO
+Do
     
-LOOP UNTIL INKEY$ <> ""
+Loop Until Inkey$ <> ""
 
-FOR i = 1 TO 100
-    PRINT i
-NEXT i
+For i = 1 To 100
+    Print i
+Next i
 
-PAPER 0
+Paper 0
 
-FUNCTION test() AS STRING
-    RETURN "Hello World"
-END FUNCTION
+Function test() As String
+    Return "Hello World"
+End Function
 
 test = test()
 
@@ -24,8 +24,8 @@ sprites = sprites()
 
 tiles()
 
-IF sprites
-    PRINT "Sprites are enabled"
-ELSE
-    PRINT "Sprites are disabled"
-END IF
+If sprites
+    Print "Sprites are enabled"
+Else
+    Print "Sprites are disabled"
+End If

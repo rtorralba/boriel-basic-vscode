@@ -151,11 +151,19 @@ function activate(context) {
         }
     };
 
+    const config = vscode.workspace.getConfiguration('borielBasic');
+    const formatKeywords = config.get('formatKeywords');
+
     // Opciones del cliente
     const clientOptions = {
         documentSelector: [{ scheme: 'file', language: 'borielbasic' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.bas')
+        },
+        initializationOptions: {
+            formatOptions: {
+                formatKeywords: formatKeywords
+            }
         }
     };
 
