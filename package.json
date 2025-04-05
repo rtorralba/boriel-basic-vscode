@@ -113,6 +113,7 @@
     "icon": "images/logo.jpg",
     "dependencies": {
         "ignore": "^7.0.3",
-        "vscode-languageclient": "^8.1.0"
+        "vscode-languageclient": "^8.1.0",
+        "boriel-basic-lsp": "^1.0.8"
     }
 }
