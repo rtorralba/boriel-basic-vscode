@@ -3,16 +3,16 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.4",
+    "version": "1.0.6",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
     "publisher": "rtorralba",
     "repository": {
-      "type": "git",
-      "url": "https://github.com/rtorralba/boriel-basic-vscode.git"
+        "type": "git",
+        "url": "https://github.com/rtorralba/boriel-basic-vscode.git"
     },
     "bugs": {
-      "url": "https://github.com/rtorralba/boriel-basic-vscode/issues"
+        "url": "https://github.com/rtorralba/boriel-basic-vscode/issues"
     },
     "engines": {
         "vscode": "^1.75.0"
@@ -64,7 +64,10 @@
                 "borielBasic.outputFormat": {
                     "type": "string",
                     "default": "tap",
-                    "enum": ["tap", "tzx"],
+                    "enum": [
+                        "tap",
+                        "tzx"
+                    ],
                     "description": "Formato de salida (tap o tzx)."
                 },
                 "borielBasic.autorun": {
@@ -101,9 +104,9 @@
                 "category": "Boriel Basic"
             },
             {
-                "command": "borelBasic.updateLSP",
+                "command": "borielBasic.updateLSP",
                 "title": "Actualizar Boriel Basic LSP",
-                "category": "Borel Basic"
+                "category": "Boriel Basic"
             }
         ]
     },
@@ -111,6 +114,6 @@
     "dependencies": {
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0",
-        "boriel-basic-lsp": "^1.0.1"
+        "boriel-basic-lsp": "^1.0.8"
     }
 }
