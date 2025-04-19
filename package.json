@@ -105,8 +105,8 @@
     },
     "icon": "images/logo.jpg",
     "dependencies": {
+        "boriel-basic-lsp": "^1.0.18",
         "ignore": "^7.0.3",
-        "vscode-languageclient": "^8.1.0",
-        "boriel-basic-lsp": "^1.0.18"
+        "vscode-languageclient": "^8.1.0"
     }
 }
