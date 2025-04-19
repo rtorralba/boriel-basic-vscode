@@ -84,18 +84,31 @@ function updateLSP() {
     vscode.window.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
-            title: "Actualizando Boriel Basic LSP...",
+            title: "Comprobando actualizaciones para Boriel Basic LSP...",
             cancellable: false
         },
         async (progress) => {
             try {
-                progress.report({ message: "Ejecutando npm install -g boriel-basic-lsp..." });
+                // Obtener la versión instalada actualmente
+                const installedVersion = child_process.execSync('npm list -g boriel-basic-lsp --depth=0 --json', { encoding: 'utf-8' });
+                const installedVersionParsed = JSON.parse(installedVersion);
+                const currentVersion = installedVersionParsed.dependencies['boriel-basic-lsp'].version;
+
+                // Obtener la última versión publicada
+                const latestVersion = child_process.execSync('npm show boriel-basic-lsp version', { encoding: 'utf-8' }).trim();
+
+                if (currentVersion === latestVersion) {
+                    vscode.window.showInformationMessage(`Ya tienes la última versión de Boriel Basic LSP (${currentVersion}).`);
+                    return;
+                }
+
+                progress.report({ message: `Actualizando Boriel Basic LSP de la versión ${currentVersion} a ${latestVersion}...` });
 
                 // Ejecutar el comando para actualizar el LSP
                 const result = child_process.execSync('npm install -g boriel-basic-lsp', { encoding: 'utf-8' });
                 console.log(result);
 
-                vscode.window.showInformationMessage("Boriel Basic LSP actualizado correctamente.");
+                vscode.window.showInformationMessage(`Boriel Basic LSP actualizado correctamente a la versión ${latestVersion}.`);
             } catch (error) {
                 console.error("Error al actualizar Boriel Basic LSP:", error);
                 vscode.window.showErrorMessage(`Error al actualizar Boriel Basic LSP: ${error.message}`);

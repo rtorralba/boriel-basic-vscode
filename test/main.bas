@@ -2,6 +2,7 @@
 
 helloWorld()
 
-if
+if 1 = 1 then
+    stop
+end if
 
-stop
