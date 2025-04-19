@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
     "publisher": "rtorralba",
@@ -33,7 +33,8 @@
                     "boriel-basic"
                 ],
                 "extensions": [
-                    ".bas"
+                    ".bas",
+                    ".zxbas"
                 ],
                 "configuration": "./language-configuration.json"
             }
