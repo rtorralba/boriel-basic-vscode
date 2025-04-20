@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.10",
+    "version": "1.0.12",
     "author": "Raül Torralba (Juntelart)",
     "license": "MIT",
     "publisher": "rtorralba",
@@ -106,7 +106,7 @@
     },
     "icon": "images/logo.jpg",
     "dependencies": {
-        "boriel-basic-lsp": "^1.0.21",
+        "boriel-basic-lsp": "^1.0.35",
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0"
     }
