@@ -111,10 +111,18 @@ function updateLSP(context) {
                     return;
                 }
 
-                progress.report({ message: `Actualizando Boriel Basic LSP de la versión ${currentVersion || 'ninguna'} a ${latestVersion}...` });
+                progress.report({ message: `Eliminando la versión actual de Boriel Basic LSP (${currentVersion || 'ninguna'})...` });
 
-                // Forzar la instalación de la última versión
-                child_process.execSync(`npm install boriel-basic-lsp@${latestVersion} --force`, {
+                // Eliminar la carpeta boriel-basic-lsp si existe
+                if (fs.existsSync(localBorielLSP)) {
+                    fs.rmSync(localBorielLSP, { recursive: true, force: true });
+                    console.log("Carpeta boriel-basic-lsp eliminada.");
+                }
+
+                progress.report({ message: `Instalando Boriel Basic LSP versión ${latestVersion}...` });
+
+                // Instalar la última versión
+                child_process.execSync(`npm install boriel-basic-lsp@${latestVersion}`, {
                     cwd: extensionPath,
                     stdio: 'inherit'
                 });
