@@ -80,7 +80,7 @@ function compileBorielBasic() {
     });
 }
 
-function updateLSP() {
+function updateLSP(context) {
     vscode.window.withProgress(
         {
             location: vscode.ProgressLocation.Notification,
@@ -89,10 +89,19 @@ function updateLSP() {
         },
         async (progress) => {
             try {
-                // Obtener la versión instalada actualmente
-                const installedVersion = child_process.execSync('npm list -g boriel-basic-lsp --depth=0 --json', { encoding: 'utf-8' });
-                const installedVersionParsed = JSON.parse(installedVersion);
-                const currentVersion = installedVersionParsed.dependencies['boriel-basic-lsp'].version;
+                const extensionPath = context.extensionPath;
+                const localNodeModules = path.join(extensionPath, 'node_modules');
+                const localBorielLSP = path.join(localNodeModules, 'boriel-basic-lsp');
+                const packageJsonPath = path.join(localBorielLSP, 'package.json');
+
+                // Verificar la versión instalada localmente leyendo el package.json
+                let currentVersion = null;
+                if (fs.existsSync(packageJsonPath)) {
+                    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                    currentVersion = packageJson.version;
+                } else {
+                    console.log("No se encontró una instalación local de boriel-basic-lsp.");
+                }
 
                 // Obtener la última versión publicada
                 const latestVersion = child_process.execSync('npm show boriel-basic-lsp version', { encoding: 'utf-8' }).trim();
@@ -102,11 +111,13 @@ function updateLSP() {
                     return;
                 }
 
-                progress.report({ message: `Actualizando Boriel Basic LSP de la versión ${currentVersion} a ${latestVersion}...` });
+                progress.report({ message: `Actualizando Boriel Basic LSP de la versión ${currentVersion || 'ninguna'} a ${latestVersion}...` });
 
-                // Ejecutar el comando para actualizar el LSP
-                const result = child_process.execSync('npm install -g boriel-basic-lsp', { encoding: 'utf-8' });
-                console.log(result);
+                // Forzar la instalación de la última versión
+                child_process.execSync(`npm install boriel-basic-lsp@${latestVersion} --force`, {
+                    cwd: extensionPath,
+                    stdio: 'inherit'
+                });
 
                 vscode.window.showInformationMessage(`Boriel Basic LSP actualizado correctamente a la versión ${latestVersion}.`);
             } catch (error) {
@@ -198,7 +209,7 @@ function activate(context) {
 
     // Registrar el comando "borielBasic.updateLSP"
     const updateLSPCommand = vscode.commands.registerCommand('borielBasic.updateLSP', () => {
-        updateLSP();
+        updateLSP(context);
     });
 
     context.subscriptions.push(compileCommand);
