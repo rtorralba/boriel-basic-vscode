@@ -67,14 +67,20 @@ function compileBorielBasic() {
     const command = `${bin} ${args.join(' ')} ${mainFile} -o ${outputFile}`;
     console.log(`Ejecutando comando: ${command}`);
 
+    let outputChannel = vscode.window.createOutputChannel('Boriel Basic');
     // Ejecutar el comando
     child_process.exec(command, { cwd: workspaceFolder }, (error, stdout, stderr) => {
+        outputChannel.clear();
+        outputChannel.show(true);
         if (error) {
+            outputChannel.appendLine(`Error al compilar:\n${stderr}`);
             vscode.window.showErrorMessage(`Error al compilar: ${stderr}`);
             console.error(`Error: ${stderr}`);
             return;
         }
 
+        outputChannel.appendLine(`Compilación completada: ${outputFile}\n`);
+        outputChannel.appendLine(stdout);
         vscode.window.showInformationMessage(`Compilación completada: ${outputFile}`);
         console.log(`Salida: ${stdout}`);
     });
