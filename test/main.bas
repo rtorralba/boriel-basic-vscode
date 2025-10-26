@@ -1,9 +1,7 @@
-#include "message.bas"
+Print "Hello, World!"
+Print "Hello, Pepe!"
+Print "Hello, Juan!"
+Print "Hello, Jose!"
+Print "Hello, Antonio!"
 
-helloWorld()
-
-if 1 = 1 then
-    stop
-end if
-
-zxbasTest()
+        

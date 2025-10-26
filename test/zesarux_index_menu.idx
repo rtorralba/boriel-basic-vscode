@@ -1,0 +1,76 @@
+Main Menu-> Debug
+Reset
+Set PC=0
+Generate NMI
+Debug CPU
+Machine Info
+Load Source Code
+Unload Source Code
+Load Symbol Table
+Debug I/O Ports
+Debug console
+Hexadecimal Editor
+View Sensors
+View Sprites
+Visual memory
+Load binary block
+Save binary block
+File utilities
+Write message
+Shortcuts helper
+Ascii Table
+Basic
+CPU Transaction Log
+CPU Statistics
+Find
+Poke
+Input File Spooling
+ESC Close
+
+Main Menu
+Smart load
+Snapshot
+Machine
+Audio
+Display
+Storage
+Debug
+Network
+Windows
+Settings
+Search menu
+Procrastinate
+Help
+ESC Close menu
+F10 Exit ZEsarUX
+
+Main Menu-> Machine
+--Select manufacturer--
+Amstrad
+Ascii Corp
+Cambridge Computers
+Chloe Corporation
+Coleco Industries
+Czerweny Electronica
+Investronica
+Jupiter Cantab
+Mario Prato
+Microdigital Eletronica
+Miles Gordon Technology
+NedoPC
+New Horizons
+Next Team
+Pentagon
+Science of Cambridge
+Sega
+Sinclair Research
+Spectravideo Intl
+Timex Computer
+Timex Sinclair
+TS Labs
+ZXUno Team
+    List type [Manufacturer]
+[ ] Custom rom
+Hotswap machine
+ESC Close
+

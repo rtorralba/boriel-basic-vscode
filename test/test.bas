@@ -29,3 +29,5 @@ If sprites
 Else
     Print "Sprites are disabled"
 End If
+
+subrutinaQueNoUso()

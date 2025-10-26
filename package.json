@@ -21,7 +21,9 @@
         "Programming Languages"
     ],
     "activationEvents": [
-        "onLanguage:borielbasic"
+        "onLanguage:borielbasic",
+        "onDebugResolve:borielbasic",
+        "onDebugInitialConfigurations"
     ],
     "main": "./extension.js",
     "contributes": {
@@ -95,6 +97,16 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Si está activado, las palabras clave se formatearán"
+                },
+                "borielBasic.zesaruxPath": {
+                    "type": "string",
+                    "default": "zesarux",
+                    "description": "Ruta al ejecutable de ZEsarUX."
+                },
+                "borielBasic.zesaruxRemoteDebugPort": {
+                    "type": "integer",
+                    "default": 10000,
+                    "description": "Puerto para el protocolo de depuración remota de ZEsarUX."
                 }
             }
         },
@@ -109,11 +121,75 @@
                 "title": "Actualizar Boriel Basic LSP",
                 "category": "Boriel Basic"
             }
+        ],
+        "breakpoints": [
+            {
+                "language": "borielbasic"
+            }
+        ],
+        "debuggers": [
+            {
+                "type": "borielbasic",
+                "label": "Boriel Basic Debug",
+                "configurationAttributes": {
+                    "launch": {
+                        "required": [
+                            "program"
+                        ],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "Archivo TAP/TZX a cargar en ZEsarUX.",
+                                "default": "${workspaceFolder}/dist/main.tap"
+                            },
+                            "zesaruxPath": {
+                                "type": "string",
+                                "description": "Ruta al ejecutable de ZEsarUX.",
+                                "default": "zesarux"
+                            },
+                            "debugPort": {
+                                "type": "integer",
+                                "description": "Puerto para el protocolo de depuración remota.",
+                                "default": 10000
+                            },
+                            "stopOnEntry": {
+                                "type": "boolean",
+                                "description": "Detener automáticamente al iniciar el programa.",
+                                "default": true
+                            }
+                        }
+                    }
+                },
+                "initialConfigurations": [
+                    {
+                        "type": "borielbasic",
+                        "request": "launch",
+                        "name": "Debug con ZEsarUX",
+                        "program": "${workspaceFolder}/dist/main.tap",
+                        "stopOnEntry": true
+                    }
+                ],
+                "configurationSnippets": [
+                    {
+                        "label": "Boriel Basic: Debug con ZEsarUX",
+                        "description": "Nueva configuración para depurar con ZEsarUX.",
+                        "body": {
+                            "type": "borielbasic",
+                            "request": "launch",
+                            "name": "Debug con ZEsarUX",
+                            "program": "^\"\\${workspaceFolder}/dist/main.tap\"",
+                            "stopOnEntry": true
+                        }
+                    }
+                ]
+            }
         ]
     },
     "icon": "images/logo.jpg",
     "dependencies": {
-        "boriel-basic-lsp": "^1.0.69",
+        "@vscode/debugadapter": "^1.68.0",
+        "@vscode/debugprotocol": "^1.68.0",
+        "boriel-basic-lsp": "^1.0.78",
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0"
     }
