@@ -177,7 +177,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const sourceContent = fs.readFileSync(mainBas, 'utf8');
                         const sourceLines = sourceContent.split('\n');
                         const preprocessedLines = [];
-                        
+                        // Tokens that represent control-flow / structural statements in Boriel
+                        // for which we should NOT insert a __BASLINE label above.
+                        const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN']);
+
                         sourceLines.forEach((line, index) => {
                             const originalLineNumber = index + 1;
                             const trimmedLine = line.trim();
@@ -186,7 +189,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             // ni directivas de preprocesado como #include). Además, no insertar
                             // antes de líneas que comienzan con If/Else/End (case-insensitive)
                             const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
-                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.toUpperCase().startsWith('REM') && !trimmedLine.startsWith('#') && !['IF','ELSE','END'].includes(firstToken)) {
+                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.toUpperCase().startsWith('REM') && !trimmedLine.startsWith('#') && !FLOW_TOKENS.has(firstToken)) {
                                 // Añadir marcador ANTES de la línea de código.
                                 // Insertamos una etiqueta ASM __BASLINE_n__: que será visible
                                 // en el ASM generado. No añadimos instrucciones extra (nop) aquí.
