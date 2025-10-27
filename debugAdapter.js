@@ -256,7 +256,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const preprocessedLines = [];
                         // Tokens that represent control-flow / structural statements in Boriel
                         // for which we should NOT insert a __BASLINE label above.
-                        const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM']);
+                        const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM','SUB','FUNCTION']);
 
                         sourceLines.forEach((line, index) => {
                             const originalLineNumber = index + 1;
