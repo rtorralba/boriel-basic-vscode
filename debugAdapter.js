@@ -472,6 +472,33 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     await this._buildAsmAddressMap(this._asmFile);
                     await this._buildBasLineAddressMap(this._asmFile);
 
+                    // If a linemap JSON exists and its keys look like addresses (e.g. '92BBH' -> '1'),
+                    // prefer the first key as the entry breakpoint (user requested behavior).
+                    try {
+                        const lmPath = this._program ? this._program.replace(/\.tap$/i, '.linemap.json') : null;
+                        if (lmPath && fs.existsSync(lmPath)) {
+                            const lmRaw = fs.readFileSync(lmPath, 'utf8');
+                            const lmObj = JSON.parse(lmRaw);
+                            const lmKeys = Object.keys(lmObj || {});
+                            if (lmKeys && lmKeys.length > 0) {
+                                const candidate = lmKeys[0];
+                                // candidate like '92BBH' or '92BBh' or '92BB'
+                                const m = String(candidate).match(/^([0-9A-Fa-f]+)H?$/);
+                                if (m) {
+                                    const hex = m[1];
+                                    const addrNum = parseInt(hex, 16);
+                                    if (!isNaN(addrNum)) {
+                                        entryAddr = addrNum;
+                                        this.sendEvent(new OutputEvent(`[Debug] Usando primera key del linemap (${candidate}) como entryAddr -> 0x${hex.toUpperCase()}\n`));
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // ignore parse errors and continue with existing heuristics
+                        this.sendEvent(new OutputEvent(`[Debug] No se pudo usar primera key de linemap: ${e.message}\n`, 'stderr'));
+                    }
+
                     // Prefer the first user-set breakpoint in the source (main.bas) as the entry point
                     let entryBasLine = null;
                     try {
@@ -756,23 +783,29 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
         // Persist a small linemap with addresses next to existing linemap file if possible
         try {
-            if (this._program) {
-                const outFile = this._program.replace(/\.tap$/i, '.linemap.json');
-                // Persist as simple mapping: { '1': '92BBH', '2': '92C8H', ... }
-                const simple = {};
-                for (const k of basKeys) {
-                    const addr = this._basLineToAddress[k];
-                    if (addr !== undefined && addr !== null) {
-                        simple[String(k)] = `${addr.toString(16).toUpperCase()}H`;
+                if (this._program) {
+                    const outFile = this._program.replace(/\.tap$/i, '.linemap.json');
+                    // Persist reverse mapping: { '92BBH': '1', '92C8H': '2', ... }
+                    const reverseSimple = {};
+                    // Also build runtime map addrDecimal -> basLine
+                    this._addrToBasLine = {};
+                    for (const k of basKeys) {
+                        const addr = this._basLineToAddress[k];
+                        if (addr !== undefined && addr !== null) {
+                            const hex = addr.toString(16).toUpperCase();
+                            reverseSimple[`${hex}H`] = String(k);
+                            try {
+                                this._addrToBasLine[parseInt(addr,10)] = parseInt(k,10);
+                            } catch (e) {}
+                        }
                     }
+                    this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseSimple).length} entries:\n`));
+                    for (const [k, v] of Object.entries(reverseSimple)) {
+                        this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${v}\n`));
+                    }
+                    fs.writeFileSync(outFile, JSON.stringify(reverseSimple, null, 2), 'utf8');
+                    this.sendEvent(new OutputEvent(`[Debug] Persistido linemap reverse con direcciones en: ${outFile}\n`));
                 }
-                this.sendEvent(new OutputEvent(`[Debug] About to persist linemap with ${Object.keys(simple).length} entries:\n`));
-                for (const [k, v] of Object.entries(simple)) {
-                    this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${v}\n`));
-                }
-                fs.writeFileSync(outFile, JSON.stringify(simple, null, 2), 'utf8');
-                this.sendEvent(new OutputEvent(`[Debug] Persistido linemap simple con direcciones en: ${outFile}\n`));
-            }
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] No se pudo persistir linemap: ${e.message}\n`, 'stderr'));
         }
@@ -1654,12 +1687,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         }
                     }
                     
-                    this._lastBasLine = mappedBasLine;
-                    
-                    if (this._lastBasLine) {
-                        this.sendEvent(new OutputEvent(`[Debug] PC=0x${pc.toString(16).toUpperCase()} mapeado a Boriel line: ${this._lastBasLine}\n`));
+                    // Only update the last mapped Boriel line when we're not currently stopped.
+                    if (!this._stopped) {
+                        this._lastBasLine = mappedBasLine;
+                        if (this._lastBasLine) {
+                            this.sendEvent(new OutputEvent(`[Debug] PC=0x${pc.toString(16).toUpperCase()} mapeado a Boriel line: ${this._lastBasLine}\n`));
+                        } else {
+                            this.sendEvent(new OutputEvent(`[Debug] PC=0x${pc.toString(16).toUpperCase()} (sin mapeo Boriel)\n`));
+                        }
                     } else {
-                        this.sendEvent(new OutputEvent(`[Debug] PC=0x${pc.toString(16).toUpperCase()} (sin mapeo Boriel)\n`));
+                        // We're stopped; avoid overwriting the mapped Boriel line to prevent races
+                        this.sendEvent(new OutputEvent(`[Debug] PC update ignored while stopped: 0x${pc.toString(16).toUpperCase()}\n`));
                     }
 
                     // Si no hemos podido mapear la PC a una línea Boriel, establecer un breakpoint
@@ -1714,7 +1752,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             mappedBasLine = (asmLine && this._reverseLineMap) ? (this._reverseLineMap[asmLine] || null) : null;
                         }
                         
-                        this._lastBasLine = mappedBasLine;
+                        if (!this._stopped) this._lastBasLine = mappedBasLine;
                         // No mostrar mensaje aquí para evitar duplicados (ya se mostró arriba)
                     }
                 }
@@ -2039,90 +2077,72 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async nextRequest(response, args) {
         // Step Over: ir a la siguiente línea Boriel
         try {
-            // Get current Boriel line
-            let currentBasLine = this._lastBasLine;
-            
-            if (!currentBasLine) {
-                this.sendEvent(new OutputEvent(`[Debug] No se conoce la línea Boriel actual\n`, 'stderr'));
+            // New strategy: perform CPU steps until the current PC matches one of the mapped addresses
+            // We require the reverse mapping this._addrToBasLine to be present
+            if (!this._addrToBasLine || Object.keys(this._addrToBasLine).length === 0) {
+                this.sendEvent(new OutputEvent(`[Debug] No reverse addr->Bas map available; falling back to previous strategy\n`, 'stderr'));
                 this.sendResponse(response);
                 return;
             }
 
-            // Ensure we have the address map
-            if (!this._basLineToAddress || Object.keys(this._basLineToAddress).length === 0) {
-                this.sendEvent(new OutputEvent(`[Debug] No hay mapa de direcciones Boriel->addr disponible\n`, 'stderr'));
-                this.sendResponse(response);
-                return;
-            }
-
-            // Find next Boriel line
-            const basLines = Object.keys(this._basLineToAddress).map(k => parseInt(k, 10)).sort((a, b) => a - b);
-            const currentIndex = basLines.indexOf(currentBasLine);
-            
-            if (currentIndex === -1) {
-                this.sendEvent(new OutputEvent(`[Debug] Línea Boriel actual ${currentBasLine} no está en el mapa\n`, 'stderr'));
-                this.sendResponse(response);
-                return;
-            }
-
-            // Check if there's a next line
-            if (currentIndex >= basLines.length - 1) {
-                // No more lines, just run without breakpoint
-                this.sendEvent(new OutputEvent(`[Debug] Step Over: no hay más líneas, ejecutando run sin breakpoint...\n`));
-                this.sendEvent(new OutputEvent(`> run\n`, 'console'));
-                await this._sendCommand('run');
-                this.sendResponse(response);
-                return;
-            }
-
-            // Get next line address
-            const nextBasLine = basLines[currentIndex + 1];
-            const nextAddr = this._basLineToAddress[nextBasLine];
-            
-            if (!nextAddr) {
-                this.sendEvent(new OutputEvent(`[Debug] No hay dirección para la siguiente línea Boriel ${nextBasLine}\n`, 'stderr'));
-                this.sendResponse(response);
-                return;
-            }
-
-            const hexNoPrefix = nextAddr.toString(16).toUpperCase();
-            const addrToken = `${hexNoPrefix}H`;
-            
-            this.sendEvent(new OutputEvent(`[Debug] Step Over: línea ${currentBasLine} -> ${nextBasLine} (addr ${addrToken})\n`));
-
-            // Set breakpoint at next line (always use slot 2)
+            // Ensure we are in step/cpu-step mode; try to enter if not
+            // If we're already at the last mapped Boriel line, 'step over' should run
             try {
-                await this._ensureBreakpointsEnabled();
-            } catch (e) {
-                // non-fatal
-            }
-
-            // Set new breakpoint (will overwrite slot 2 if it exists)
-            const cmd = `set-breakpoint 2 PC=${hexNoPrefix}H`;
-            this.sendEvent(new OutputEvent(`> ${cmd}\n`, 'console'));
-            
-            try {
-                const resp = await this._sendCommandAndWait(cmd);
-                const lower = String(resp || '').toLowerCase();
-                
-                if (lower.includes('unknown command') || lower.includes('error')) {
-                    this.sendEvent(new OutputEvent(`[Debug] set-breakpoint no soportado, usando fallback\n`));
-                    await this._sendCommand(`break set ${hexNoPrefix}H`);
+                const basKeys = this._basLineToAddress ? Object.keys(this._basLineToAddress).map(k => parseInt(k,10)).filter(n=>!isNaN(n)) : [];
+                const maxBas = basKeys.length ? Math.max(...basKeys) : null;
+                if (maxBas !== null && this._lastBasLine && parseInt(this._lastBasLine,10) === maxBas) {
+                    this.sendEvent(new OutputEvent(`[Debug] Step Over requested but current Boriel line ${this._lastBasLine} is last mapped line -> issuing run\n`));
+                    setImmediate(async () => {
+                        try { await this._sendCommand('run'); } catch (e) { this.sendEvent(new OutputEvent(`[Debug] Error issuing run: ${e.message}\n`, 'stderr')); }
+                    });
+                    this.sendResponse(response);
+                    return;
                 }
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] Error estableciendo breakpoint: ${e.message}\n`, 'stderr'));
+            } catch (e) { /* ignore */ }
+
+            try { await this._sendCommandAndWait('enter-cpu-step'); } catch (e) { /* ignore */ }
+
+            // Repeatedly perform cpu-step and watch PC until we hit an address that maps to a Boriel line
+            const maxSteps = 2000; // safety limit to avoid infinite loops
+            let steps = 0;
+            let foundBasLine = null;
+
+            while (steps < maxSteps) {
+                // Ask emulator to step one instruction and read PC via cpu-step (we rely on socket data handler to update this._lastPC)
+                try {
+                    await this._sendCommandAndWait('cpu-step-over');
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] cpu-step-over failed: ${e.message}\n`, 'stderr'));
+                    break;
+                }
+
+                // Give a tiny delay to let socket handler update _lastPC
+                await this._waitForZesarux(20);
+
+                const pc = this._lastPC;
+                if (pc && this._addrToBasLine[pc]) {
+                    foundBasLine = this._addrToBasLine[pc];
+                    this.sendEvent(new OutputEvent(`[Debug] Step Over: reached PC=0x${pc.toString(16).toUpperCase()} which maps to Boriel line ${foundBasLine}\n`));
+                    break;
+                }
+
+                steps++;
+            }
+
+            if (foundBasLine) {
+                this._lastBasLine = foundBasLine;
+
+                // (Do not auto-run when we reach the last Boriel line here; leave it stopped.)
+
+                this._stopped = true;
+                this.sendResponse(response);
+                this.sendEvent(new StoppedEvent('step', 1));
+                return;
+            } else {
+                this.sendEvent(new OutputEvent(`[Debug] Step Over: did not find mapped Boriel line after ${steps} asm steps\n`, 'stderr'));
                 this.sendResponse(response);
                 return;
             }
-
-            // Execute run - will stop at the breakpoint
-            this.sendEvent(new OutputEvent(`> run\n`, 'console'));
-            await this._sendCommand('run');
-
-            // Update current line
-            this._lastBasLine = nextBasLine;
-
-            this.sendResponse(response);
         } catch (err) {
             this.sendEvent(new OutputEvent(`[Debug] Error en nextRequest: ${err.message}\n`, 'stderr'));
             this.sendResponse(response);
@@ -2130,9 +2150,59 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async stepInRequest(response, args) {
-        await this._sendCommand('cpu-step');
-        this.sendResponse(response);
-        this.sendEvent(new StoppedEvent('step', 1));
+        // Step Into: perform CPU single-instruction steps until we reach an address
+        // that maps to a Boriel source line (this._addrToBasLine).
+        try {
+            if (!this._addrToBasLine || Object.keys(this._addrToBasLine).length === 0) {
+                this.sendEvent(new OutputEvent(`[Debug] No reverse addr->Bas map available for stepIn; falling back to single cpu-step\n`, 'stderr'));
+                try { await this._sendCommand('cpu-step'); } catch (e) { this.sendEvent(new OutputEvent(`[Debug] cpu-step failed: ${e.message}\n`, 'stderr')); }
+                this.sendResponse(response);
+                this.sendEvent(new StoppedEvent('step', 1));
+                return;
+            }
+
+            // Ensure step mode
+            try { await this._sendCommandAndWait('enter-cpu-step'); } catch (e) { /* ignore */ }
+
+            const maxSteps = 2000;
+            let steps = 0;
+            let foundBasLine = null;
+
+            while (steps < maxSteps) {
+                try {
+                    await this._sendCommandAndWait('cpu-step');
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] cpu-step failed: ${e.message}\n`, 'stderr'));
+                    break;
+                }
+
+                await this._waitForZesarux(20);
+
+                const pc = this._lastPC;
+                if (pc && this._addrToBasLine[pc]) {
+                    foundBasLine = this._addrToBasLine[pc];
+                    this.sendEvent(new OutputEvent(`[Debug] Step Into: reached PC=0x${pc.toString(16).toUpperCase()} which maps to Boriel line ${foundBasLine}\n`));
+                    break;
+                }
+
+                steps++;
+            }
+
+            if (foundBasLine) {
+                this._lastBasLine = foundBasLine;
+                this._stopped = true;
+                this.sendResponse(response);
+                this.sendEvent(new StoppedEvent('step', 1));
+                return;
+            } else {
+                this.sendEvent(new OutputEvent(`[Debug] Step Into: did not find mapped Boriel line after ${steps} asm steps\n`, 'stderr'));
+                this.sendResponse(response);
+                return;
+            }
+        } catch (err) {
+            this.sendEvent(new OutputEvent(`[Debug] Error en stepInRequest: ${err.message}\n`, 'stderr'));
+            this.sendResponse(response);
+        }
     }
 
     async stepOutRequest(response, args) {

@@ -6,10 +6,14 @@ Dim score As Ubyte
 score = 85
 
 If score < 90 Then
-    Print "Hello, Juan!"
+    greetUser("Maria")
 Else
     Print "Hello, Jose!"
 End If
 
 Print "Hello, Antonio!"
+
+Sub greetUser(name As String)
+    Print "Hello, " + name + "!"
+End Sub
 
