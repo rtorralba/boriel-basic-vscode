@@ -21,6 +21,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     this._breakpointsEnabled = false;
     this._breakpointIdCounter = 1;
     this._breakpointAddrToId = new Map();
+        // user breakpoints stored per source path: { '/abs/path/main.bas': Set([1,2,3]) }
+        this._userBreakpointsByFile = {};
         // Si true, preferimos usar la secuencia enter-cpu-step -> cpu-step -> run
         // en lugar de intentar 'tape play'/'tape start'. Esto evita depender de
         // builds de ZEsarUX que no implementan esos comandos.
@@ -131,7 +133,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`⚠ No se encontró archivo de mapeo de líneas: ${lineMapFile}\n`));
             }
             
-            // Guardar referencia al archivo fuente
+            // Guardar referencia al archivo fuente (por defecto basado en el TAP)
             this._sourceFile = program.replace(/\.tap$/i, '.bas');
             
             this.sendEvent(new OutputEvent(`Configuración de debug:\n`));
@@ -146,6 +148,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const workspaceDir = path.dirname(programDir); // .../test
                 const baseName = path.basename(program, '.tap');
                 const mainBas = path.join(workspaceDir, baseName + '.bas');
+                // If we found the original main.bas, prefer it as the source file
+                try {
+                    if (fs.existsSync(mainBas)) {
+                        this._sourceFile = mainBas;
+                    }
+                } catch (e) {}
                 this.sendEvent(new OutputEvent(`[Debug] Intentando compilar desde: ${mainBas} (si existe)\n`));
 
                 // Determinar binario zxbc según plataforma
@@ -174,8 +182,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             const originalLineNumber = index + 1;
                             const trimmedLine = line.trim();
 
-                            // Solo añadir marcadores para líneas de código real (no vacías, no comentarios)
-                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.startsWith('REM')) {
+                            // Solo añadir marcadores para líneas de código real (no vacías, no comentarios,
+                            // ni directivas de preprocesado como #include)
+                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.toUpperCase().startsWith('REM') && !trimmedLine.startsWith('#')) {
                                 // Añadir marcador ANTES de la línea de código.
                                 // Insertamos una etiqueta ASM __BASLINE_n__: que será visible
                                 // en el ASM generado. No añadimos instrucciones extra (nop) aquí.
@@ -380,16 +389,30 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 if (this._asmFile && fs.existsSync(this._asmFile)) {
                     await this._buildAsmAddressMap(this._asmFile);
                     await this._buildBasLineAddressMap(this._asmFile);
-                    
-                    // Use the address of the first Boriel line as entry point
-                    if (this._basLineToAddress && this._basLineToAddress[1]) {
-                        entryAddr = this._basLineToAddress[1];
-                        this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada (BASLINE_1): 0x${entryAddr.toString(16).toUpperCase()}\n`));
-                    } else if (this._asmLineToAddress && Object.keys(this._asmLineToAddress).length > 0) {
-                        // Fallback: use minimum ASM address
-                        const addrs = Object.values(this._asmLineToAddress).map(n => parseInt(n, 10));
-                        entryAddr = Math.min(...addrs);
-                        this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada estimada (fallback): 0x${entryAddr.toString(16).toUpperCase()}\n`));
+
+                    // Prefer the first user-set breakpoint in the source (main.bas) as the entry point
+                    let entryBasLine = null;
+                    try {
+                        if (this._sourceFile && this._userBreakpointsByFile && this._userBreakpointsByFile[this._sourceFile]) {
+                            const s = Array.from(this._userBreakpointsByFile[this._sourceFile]).map(n => parseInt(n,10)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+                            if (s.length > 0) entryBasLine = s[0];
+                        }
+                    } catch (e) {}
+
+                    if (entryBasLine && this._basLineToAddress && this._basLineToAddress[entryBasLine]) {
+                        entryAddr = this._basLineToAddress[entryBasLine];
+                        this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada (primer breakpoint usuario, Boriel ${entryBasLine}): 0x${entryAddr.toString(16).toUpperCase()}\n`));
+                    } else {
+                        // Use the address of the first Boriel line as entry point
+                        if (this._basLineToAddress && this._basLineToAddress[1]) {
+                            entryAddr = this._basLineToAddress[1];
+                            this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada (BASLINE_1): 0x${entryAddr.toString(16).toUpperCase()}\n`));
+                        } else if (this._asmLineToAddress && Object.keys(this._asmLineToAddress).length > 0) {
+                            // Fallback: use minimum ASM address
+                            const addrs = Object.values(this._asmLineToAddress).map(n => parseInt(n, 10));
+                            entryAddr = Math.min(...addrs);
+                            this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada estimada (fallback): 0x${entryAddr.toString(16).toUpperCase()}\n`));
+                        }
                     }
                 }
 
@@ -1275,6 +1298,24 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         return bestLine;
     }
 
+    /**
+     * Return the next user-set Boriel line > currentBasLine for the active source (this._sourceFile).
+     */
+    _getNextUserBreakpointAfter(currentBasLine) {
+        try {
+            if (!this._sourceFile) return null;
+            const s = this._userBreakpointsByFile && this._userBreakpointsByFile[this._sourceFile];
+            if (!s || s.size === 0) return null;
+            const arr = Array.from(s).map(n => parseInt(n,10)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+            for (const n of arr) {
+                if (n > currentBasLine) return n;
+            }
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
     async _attemptConnection(port) {
         return new Promise((resolve, reject) => {
             this._debugSocket = new net.Socket();
@@ -1797,12 +1838,47 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         }
 
         response.body = { breakpoints };
+        // Store the user requested breakpoints for this source file so we can
+        // use them later (e.g. entry breakpoint preference and run->next-breakpoint behavior)
+        try {
+            if (sourcePath) {
+                this._userBreakpointsByFile[sourcePath] = new Set((clientLines || []).map(n => parseInt(n, 10)).filter(n => !isNaN(n)));
+                this.sendEvent(new OutputEvent(`[Debug] User breakpoints for ${sourcePath}: ${Array.from(this._userBreakpointsByFile[sourcePath]).sort((a,b)=>a-b).join(',')}\n`));
+            }
+        } catch (e) {}
+
         this.sendResponse(response);
     }
 
     async continueRequest(response, args) {
         this._stopped = false;
-        await this._sendCommand('run');
+        try {
+            // If there is a user-set breakpoint after current Boriel line, set it as the next run target
+            const current = this._lastBasLine || 0;
+            const nextUser = this._getNextUserBreakpointAfter(current);
+            if (nextUser && this._basLineToAddress && this._basLineToAddress[nextUser]) {
+                const addrNum = this._basLineToAddress[nextUser];
+                const hexNoPrefix = parseInt(addrNum,10).toString(16).toUpperCase();
+                try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+                const cmd = `set-breakpoint 2 PC=${hexNoPrefix}H`;
+                this.sendEvent(new OutputEvent(`[Debug] continue: instalando breakpoint temporal en siguiente breakpoint usuario Boriel ${nextUser} (addr ${hexNoPrefix}H)\n`));
+                this.sendEvent(new OutputEvent(`> ${cmd}\n`, 'console'));
+                try {
+                    const resp = await this._sendCommandAndWait(cmd);
+                    const lower = String(resp || '').toLowerCase();
+                    if (lower.includes('unknown command') || lower.includes('error')) {
+                        this.sendEvent(new OutputEvent(`[Debug] set-breakpoint no soportado, usando fallback\n`));
+                        await this._sendCommand(`break set ${hexNoPrefix}H`);
+                    }
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] Error estableciendo breakpoint de continue: ${e.message}\n`, 'stderr'));
+                }
+            }
+
+            await this._sendCommand('run');
+        } catch (e) {
+            this.sendEvent(new OutputEvent(`[Debug] continueRequest error: ${e.message}\n`, 'stderr'));
+        }
         this.sendResponse(response);
     }
 
@@ -1931,17 +2007,78 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         // Intentar retornar un stack frame con fuente y línea mapeada desde el último PC conocido
         let source = undefined;
         let line = 1;
+        // Prefer the known source file if available
         if (this._lastBasLine && this._sourceFile && fs.existsSync(this._sourceFile)) {
             source = new Source(path.basename(this._sourceFile), this._sourceFile);
             line = this._lastBasLine;
-        } else if (this._sourceFile && fs.existsSync(this._sourceFile)) {
-            source = new Source(path.basename(this._sourceFile), this._sourceFile);
-            line = 1;
+        } else {
+            // Try to locate a sensible .bas source file if the stored path is missing
+            const candidates = [];
+            try {
+                    if (this._program) {
+                        // Prefer the original main.bas corresponding to the TAP (not the preprocessed file)
+                        const preferMain = this._program.replace(/\.tap$/i, '.bas');
+                        candidates.push(preferMain);
+                    }
+                    if (this._asmFile) candidates.push(this._asmFile.replace(/\.asm$/i, '.bas'));
+                // same folder as program
+                if (this._program) {
+                    const progDir = path.dirname(this._program);
+                    const progBase = path.basename(this._program, '.tap');
+                    candidates.push(path.join(progDir, progBase + '.bas'));
+                }
+                // fallback to workspace cwd
+                if (process.cwd()) {
+                    const cwdBase = path.basename(process.cwd());
+                    candidates.push(path.join(process.cwd(), cwdBase + '.bas'));
+                }
+            } catch (e) {}
+
+            let found = null;
+            // Prefer exact main.bas (avoid selecting preprocessed files)
+            for (const c of candidates) {
+                if (!c) continue;
+                if (c.toLowerCase().endsWith('.preprocessed.bas')) continue;
+                if (fs.existsSync(c)) { found = c; break; }
+            }
+
+            if (!found) {
+                // Last resort: search nearby for any .bas file in program directory
+                try {
+                    if (this._program) {
+                        const pdir = path.dirname(this._program);
+                        const files = fs.readdirSync(pdir);
+                        // Prefer a file that matches the TAP basename (main.bas)
+                        const tapBase = path.basename(this._program, '.tap').toLowerCase();
+                        for (const f of files) {
+                            if (!f.toLowerCase().endsWith('.bas')) continue;
+                            const full = path.join(pdir, f);
+                            if (f.toLowerCase() === `${tapBase}.bas`) { found = full; break; }
+                            if (f.toLowerCase().endsWith('.preprocessed.bas')) continue;
+                            if (!found) found = full; // keep first non-preprocessed as fallback
+                        }
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
+            if (found) {
+                source = new Source(path.basename(found), found);
+                line = this._lastBasLine || 1;
+                this._sourceFile = found; // cache for later
+            } else if (this._sourceFile && fs.existsSync(this._sourceFile)) {
+                source = new Source(path.basename(this._sourceFile), this._sourceFile);
+                line = this._lastBasLine || 1;
+            }
         }
 
         const stackFrames = [
             new StackFrame(1, "Main", source, line, 1)
         ];
+
+        // Inform the debug console and help VS Code to show the file/line
+        if (source && line) {
+            this.sendEvent(new OutputEvent(`[Debug] Mapeo de stack: archivo=${source.path} linea=${line}\n`));
+        }
 
         response.body = {
             stackFrames: stackFrames,
