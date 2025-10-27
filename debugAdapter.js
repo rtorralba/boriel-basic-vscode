@@ -183,8 +183,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             const trimmedLine = line.trim();
 
                             // Solo añadir marcadores para líneas de código real (no vacías, no comentarios,
-                            // ni directivas de preprocesado como #include)
-                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.toUpperCase().startsWith('REM') && !trimmedLine.startsWith('#')) {
+                            // ni directivas de preprocesado como #include). Además, no insertar
+                            // antes de líneas que comienzan con If/Else/End (case-insensitive)
+                            const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
+                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.toUpperCase().startsWith('REM') && !trimmedLine.startsWith('#') && !['IF','ELSE','END'].includes(firstToken)) {
                                 // Añadir marcador ANTES de la línea de código.
                                 // Insertamos una etiqueta ASM __BASLINE_n__: que será visible
                                 // en el ASM generado. No añadimos instrucciones extra (nop) aquí.
