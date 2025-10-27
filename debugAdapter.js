@@ -44,6 +44,83 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         console.log('[BorielBasicDebug] Inicializado');
     }
 
+    /**
+     * Parse the ASM file to detect global variables: labels followed by DB/DW/DEFB/DEFW/DS directives.
+     * Builds this._globalVariables = [ { name, asmLine, type, size, addr } ]
+     */
+    async _buildGlobalVariableMap(asmFile) {
+        this._globalVariables = [];
+        if (!asmFile || !fs.existsSync(asmFile)) return;
+        try {
+            const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n').filter(line => line.trim() !== '');
+            for (let i = 0; i < asmLines.length; i++) {
+                const line = asmLines[i];
+                const mLabel = line.match(/^\s*([A-Za-z_\.][A-Za-z0-9_\.]*)\s*:\s*$/);
+                if (mLabel) {
+                    const name = mLabel[1];
+                    // Look ahead for data directive lines
+                    let j = i + 1;
+                    while (j < asmLines.length) {
+                        const txt = asmLines[j].trim();
+                        if (!txt || txt.startsWith(';') || txt.toUpperCase().startsWith('END')) { j++; continue; }
+                        // Match data directives: db, dw, defb, defw, ds, ascii
+                        const mData = txt.match(/^(db|dw|defb|defw|ds|ascii)\b\s*(.*)/i);
+                        if (mData) {
+                            const directive = mData[1].toLowerCase();
+                            const rest = mData[2].trim();
+                            let type = 'blob';
+                            let size = 0;
+                            if (directive === 'db' || directive === 'defb') {
+                                type = 'byte';
+                                // count number of comma separated values or string literal
+                                // If rest contains a quoted string, count characters
+                                const strMatch = rest.match(/^"([^"]*)"/);
+                                if (strMatch) {
+                                    size = strMatch[1].length;
+                                } else {
+                                    const parts = rest.split(/,/).map(s=>s.trim()).filter(s=>s.length>0);
+                                    size = parts.length;
+                                }
+                            } else if (directive === 'dw' || directive === 'defw') {
+                                type = 'word';
+                                const parts = rest.split(/,/).map(s=>s.trim()).filter(s=>s.length>0);
+                                size = parts.length * 2;
+                            } else if (directive === 'ds') {
+                                type = 'reserve';
+                                const num = parseInt(rest.split(/[,\s]/)[0], 10) || 0;
+                                size = num;
+                            } else if (directive === 'ascii') {
+                                type = 'string';
+                                const strMatch = rest.match(/^"([^"]*)"/);
+                                size = strMatch ? strMatch[1].length : rest.length;
+                            }
+
+                            // Determine runtime address: prefer asmSymbolAddressMap or asmLineToAddress
+                            let addr = null;
+                            if (this._asmSymbolAddressMap && this._asmSymbolAddressMap[name]) addr = this._asmSymbolAddressMap[name];
+                            if (!addr && this._asmLineToAddress) {
+                                const asmLineNum = j + 1; // 1-based
+                                if (this._asmLineToAddress[asmLineNum]) addr = this._asmLineToAddress[asmLineNum];
+                            }
+
+                            this._globalVariables.push({ name, asmLine: i+1, type, size, addr: addr || null });
+                        }
+                        break; // whether data or not, stop scanning ahead for this label
+                    }
+                }
+            }
+
+            if (this._globalVariables.length > 0) {
+                this.sendEvent(new OutputEvent(`[Debug] Detectadas ${this._globalVariables.length} variables globales en ASM\n`));
+                for (const g of this._globalVariables) {
+                    this.sendEvent(new OutputEvent(`[Debug]   ${g.name} @ asmLine ${g.asmLine} type=${g.type} size=${g.size} addr=${g.addr ? '0x'+g.addr.toString(16).toUpperCase() : 'unknown'}\n`));
+                }
+            }
+        } catch (e) {
+            throw e;
+        }
+    }
+
     initializeRequest(response, args) {
         console.log('[BorielBasicDebug] ============================================');
         console.log('[BorielBasicDebug] initializeRequest LLAMADO');
@@ -179,7 +256,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const preprocessedLines = [];
                         // Tokens that represent control-flow / structural statements in Boriel
                         // for which we should NOT insert a __BASLINE label above.
-                        const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN']);
+                        const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM']);
 
                         sourceLines.forEach((line, index) => {
                             const originalLineNumber = index + 1;
@@ -519,6 +596,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async _buildAsmAddressMap(asmFile) {
         this._asmLineToAddress = {};
         this._asmLabelAddressMap = {};
+    this._asmSymbolAddressMap = {}; // other symbols (labels) -> address
         if (!asmFile || !fs.existsSync(asmFile)) return;
         try {
             const zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
@@ -541,22 +619,31 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
 
-            // Parse 'Declaring' lines to capture label addresses for __BASLINE_N__
-            // Format: debug: memory.py:219 Declaring '.__BASLINE_1__' (value 92BBh) in 2
-            const declRe = /Declaring\s+'\.?__BASLINE_(\d+)__'.*\(value\s+([0-9A-Fa-f]+)h?\)/i;
+            // Parse 'Declaring' lines to capture label addresses for any declared symbols
+            // Format example: Declaring '.__BASLINE_1__' (value 92BBh) in 2
+            const declReAny = /Declaring\s+'\.?([A-Za-z0-9_\.]+)'.*\(value\s+([0-9A-Fa-f]+)h?\)/i;
             let declCount = 0;
             for (const line of out.split('\n')) {
-                const md = line.match(declRe);
+                const md = line.match(declReAny);
                 if (md) {
-                    const basNum = parseInt(md[1], 10);
+                    const name = md[1];
                     const hex = md[2];
                     const addrDec = parseInt(hex, 16);
-                    this._asmLabelAddressMap[basNum] = addrDec;
+                    // If it's a BASLINE marker, store in asmLabelAddressMap keyed by line number
+                    const mBas = name.match(/^__BASLINE_(\d+)__$/i);
+                    if (mBas) {
+                        const basNum = parseInt(mBas[1], 10);
+                        this._asmLabelAddressMap[basNum] = addrDec;
+                        this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BASLINE_${basNum} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
+                    } else {
+                        // store other symbol labels
+                        this._asmSymbolAddressMap[name] = addrDec;
+                        this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found symbol '${name}' at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
+                    }
                     declCount++;
-                    this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BASLINE_${basNum} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
                 }
             }
-            this.sendEvent(new OutputEvent(`[Debug] Total parsed: ${declCount} __BASLINE address declarations\n`));
+            this.sendEvent(new OutputEvent(`[Debug] Total parsed declarations from zxbasm: ${declCount}\n`));
 
             // Also parse ASM disassembly address lines and map to asm source lines
             const addrLines = out.split('\n').filter(l => /\bASM:\s*/.test(l));
@@ -650,6 +737,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     }
                 }
             }
+        }
+
+        // Build global variable map from ASM: labels followed by data directives
+        try {
+            await this._buildGlobalVariableMap(asmFile);
+        } catch (e) {
+            this.sendEvent(new OutputEvent(`[Debug] No se pudo construir mapa de variables globales: ${e.message}\n`, 'stderr'));
         }
 
         // Log the mapping in a human readable way
@@ -1064,6 +1158,54 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this._debugSocket.on('data', dataListener);
             this._debugSocket.write(command + '\n');
         });
+    }
+
+    /**
+     * Read memory from ZEsarUX at addrNum (decimal) for length bytes.
+     * Tries the 'read-memory' command and parses returned hex bytes.
+     * Returns an array of byte values (numbers) or null on failure.
+     */
+    async _readMemoryZesarux(addrNum, length = 1) {
+        if (!this._debugSocket || this._debugSocket.destroyed) return null;
+        try {
+            const hex = parseInt(addrNum, 10).toString(16).toUpperCase().padStart(4, '0');
+            const cmd = `read-memory ${hex}H ${length}`;
+            this.sendEvent(new OutputEvent(`> ${cmd}\n`, 'console'));
+            const resp = await this._sendCommandAndWait(cmd);
+            const txt = String(resp || '').trim();
+
+            // Common response formats vary. Extract hex byte pairs from the response.
+            // Example responses we try to handle: "00 1A 2B", "0x00 0x1A", "001A2B", etc.
+            const bytes = [];
+            // First, try to find sequences of 2-hex-digit tokens
+            const mPairs = txt.match(/\b[0-9A-Fa-f]{2}\b/g);
+            if (mPairs && mPairs.length > 0) {
+                for (let i = 0; i < Math.min(mPairs.length, length); i++) {
+                    bytes.push(parseInt(mPairs[i], 16));
+                }
+                return bytes;
+            }
+
+            // Next, try to find longer hex and split
+            const mLong = txt.match(/\b[0-9A-Fa-f]+\b/);
+            if (mLong && mLong[0].length >= 2) {
+                const s = mLong[0];
+                // If the string length is even, split into bytes
+                if (s.length % 2 === 0) {
+                    for (let i = 0; i < Math.min(s.length / 2, length); i++) {
+                        const hexPart = s.substr(i * 2, 2);
+                        bytes.push(parseInt(hexPart, 16));
+                    }
+                    return bytes;
+                }
+            }
+
+            // If nothing parsed, return null
+            return null;
+        } catch (e) {
+            this.sendEvent(new OutputEvent(`[Debug] readMemory error: ${e.message}\n`, 'stderr'));
+            return null;
+        }
     }
 
     // Dump a compact diagnostics summary about line maps to the debug output
@@ -2098,6 +2240,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             new Scope("Memoria", this._variableHandles.create("memory"), false)
         ];
 
+        // Add Globals scope if we have detected global variables
+        try {
+            if (this._globalVariables && this._globalVariables.length > 0) {
+                scopes.push(new Scope("Globals", this._variableHandles.create("globals"), false));
+            }
+        } catch (e) {}
+
         response.body = {
             scopes: scopes
         };
@@ -2122,6 +2271,56 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             } else if (this._lastAsmLine) {
                 variables.unshift({ name: 'MappedAsmLine', value: String(this._lastAsmLine), variablesReference: 0 });
             }
+        }
+
+        // Globals scope: return parsed global variable descriptors (name, type, address)
+        if (id === "globals") {
+            try {
+                if (this._globalVariables && this._globalVariables.length > 0) {
+                    for (const g of this._globalVariables) {
+                        try {
+                            let display = `${g.type}`;
+                            if (g.addr) {
+                                const addrNum = parseInt(g.addr, 10);
+                                const hexAddr = addrNum.toString(16).toUpperCase().padStart(4, '0');
+                                // Attempt to read memory from emulator
+                                const bytes = await this._readMemoryZesarux(addrNum, Math.max(1, Math.min(g.size || 1, 256)));
+                                if (bytes && bytes.length > 0) {
+                                    if (g.type === 'byte' || (g.size === 1)) {
+                                        display = `byte ${bytes[0]} (0x${bytes[0].toString(16).toUpperCase()})`;
+                                    } else if (g.type === 'word' || (g.size === 2)) {
+                                        const lo = bytes[0] || 0;
+                                        const hi = bytes[1] || 0;
+                                        const val = lo + (hi << 8);
+                                        display = `word ${val} (0x${val.toString(16).toUpperCase()})`;
+                                    } else if (g.type === 'string') {
+                                        const chars = bytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+                                        display = `string "${chars}"`;
+                                    } else if (g.type === 'reserve') {
+                                        display = `reserve ${g.size} bytes @ 0x${hexAddr}`;
+                                    } else {
+                                        display = `${g.type} ${bytes.map(b => b.toString(16).padStart(2,'0')).join(' ')} (len=${bytes.length})`;
+                                    }
+                                } else {
+                                    display = `${g.type} addr=0x${hexAddr}`;
+                                }
+                            } else {
+                                display = `${g.type} (addr unknown)`;
+                            }
+
+                            variables.push({ name: g.name, value: display, variablesReference: 0 });
+                        } catch (inner) {
+                            variables.push({ name: g.name, value: `error: ${inner.message}`, variablesReference: 0 });
+                        }
+                    }
+                }
+            } catch (e) {
+                variables.push({ name: 'error', value: e.message, variablesReference: 0 });
+            }
+
+            response.body = { variables };
+            this.sendResponse(response);
+            return;
         }
 
         response.body = {
