@@ -36,6 +36,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._asmLineToAddress = null; // Mapeo línea ASM -> dirección
     this._asmLabelAddressMap = {}; // mapa de etiqueta __BASLINE_N__ -> dirección (desde zxbasm Declaring)
         this._lastPC = null; // último PC leído del emulador
+        this._previousPC = null; // PC anterior (para detectar isEndOfSub en ambas posiciones)
         this._lastAsmLine = null; // última línea ASM conocida para PC
         this._lastBasLine = null; // última línea Boriel conocida para PC
         this._sourceFile = null; // Archivo fuente .bas
@@ -192,15 +193,35 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const lineMapContent = fs.readFileSync(lineMapFile, 'utf8');
                     this._lineMap = JSON.parse(lineMapContent);
                     
-                    // Crear mapeo inverso (línea ASM -> línea Boriel)
+                    // Detect format and create appropriate reverse mapping
                     this._reverseLineMap = {};
-                    for (const [basLine, asmLines] of Object.entries(this._lineMap)) {
-                        for (const asmLine of asmLines) {
-                            this._reverseLineMap[asmLine] = parseInt(basLine);
+                    
+                    // Check if this is the new extended format (address -> { borielLine, sourceFile, isEndOfSub })
+                    const firstKey = Object.keys(this._lineMap)[0];
+                    const firstValue = this._lineMap[firstKey];
+                    
+                    if (firstValue && typeof firstValue === 'object' && firstValue.borielLine !== undefined) {
+                        // New extended format - use as-is
+                        this._reverseLineMap = this._lineMap;
+                        this.sendEvent(new OutputEvent(`✓ Linemap cargado (formato extendido): ${Object.keys(this._lineMap).length} direcciones mapeadas\n`));
+                    } else {
+                        // Old format or basLine -> [asmLines] format
+                        for (const [key, value] of Object.entries(this._lineMap)) {
+                            if (Array.isArray(value)) {
+                                // basLine -> [asmLines] format
+                                const basLine = key;
+                                const asmLines = value;
+                                for (const asmLine of asmLines) {
+                                    this._reverseLineMap[asmLine] = parseInt(basLine);
+                                }
+                            } else {
+                                // address -> basLine format
+                                this._reverseLineMap[key] = { borielLine: parseInt(value, 10), sourceFile: null, isEndOfSub: false };
+                            }
                         }
+                        this.sendEvent(new OutputEvent(`✓ Linemap cargado (formato legacy): ${Object.keys(this._lineMap).length} entradas convertidas\n`));
                     }
                     
-                    this.sendEvent(new OutputEvent(`✓ Mapeo de líneas cargado: ${Object.keys(this._lineMap).length} líneas mapeadas\n`));
                     console.log('[BorielBasic Debug] Line map loaded:', this._lineMap);
                 } catch (err) {
                     this.sendEvent(new OutputEvent(`⚠ Error al cargar mapeo de líneas: ${err.message}\n`));
@@ -718,6 +739,93 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._basLineToAddress = {};
         if (!asmFile || !fs.existsSync(asmFile)) return;
 
+        // Find original .bas source file to detect END SUB/FUNCTION and function calls
+        const sourceFile = this._sourceFile;
+        const endOfSubLines = new Set();
+        const functionCallInfo = new Map(); // Maps function name -> {callLine, callAddress}
+
+        if (sourceFile && fs.existsSync(sourceFile)) {
+            try {
+                const sourceContent = fs.readFileSync(sourceFile, 'utf8').split('\n');
+                
+                // First pass: detect function calls
+                for (let i = 0; i < sourceContent.length; i++) {
+                    const line = sourceContent[i].trim();
+                    // Look for function calls like: greetUser("Maria"), functionName(args), etc.
+                    const functionCallMatch = line.match(/(\w+)\s*\(/);
+                    if (functionCallMatch && !line.toUpperCase().includes('PRINT') && 
+                        !line.toUpperCase().includes('IF') && !line.toUpperCase().includes('FOR') &&
+                        !line.toUpperCase().includes('WHILE') && !line.toUpperCase().includes('DIM')) {
+                        const functionName = functionCallMatch[1];
+                        this.sendEvent(new OutputEvent(`[Debug] Detected function call '${functionName}' at line ${i + 1}\n`));
+                        functionCallInfo.set(functionName, { callLine: i + 1, callAddress: null });
+                    }
+                }
+                
+                // Second pass: detect END SUB/FUNCTION and match with calls
+                for (let i = 0; i < sourceContent.length; i++) {
+                    const line = sourceContent[i].trim().toUpperCase();
+                    if (line.startsWith('END SUB') || line.startsWith('END FUNCTION')) {
+                        // Find the function definition line
+                        let functionName = null;
+                        for (let j = i - 1; j >= 0; j--) {
+                            const prevLine = sourceContent[j].trim().toUpperCase();
+                            const subMatch = prevLine.match(/SUB\s+(\w+)/);
+                            const funcMatch = prevLine.match(/FUNCTION\s+(\w+)/);
+                            if (subMatch || funcMatch) {
+                                functionName = (subMatch || funcMatch)[1].toLowerCase();
+                                break;
+                            }
+                        }
+                        
+                        // The actual return happens on the line *before* the END SUB/FUNCTION
+                        // Let's find the last non-empty, non-comment line before the END SUB/FUNCTION
+                        let targetLine = -1;
+                        for (let j = i - 1; j >= 0; j--) {
+                            const prevLine = sourceContent[j].trim();
+                            if (prevLine && !prevLine.startsWith("'") && !prevLine.toUpperCase().startsWith("REM") &&
+                                !prevLine.toUpperCase().startsWith("SUB") && !prevLine.toUpperCase().startsWith("FUNCTION")) {
+                                targetLine = j + 1; // 1-based line number
+                                break;
+                            }
+                        }
+                        if (targetLine !== -1) {
+                            this.sendEvent(new OutputEvent(`[Debug] Detected end of sub/function '${functionName}' at line ${i+1}. Marking line ${targetLine} as isEndOfSub.\n`));
+                            endOfSubLines.add(targetLine);
+                            
+                            // Store function info for later stepOutAddress calculation
+                            if (functionName && functionCallInfo.has(functionName)) {
+                                const callInfo = functionCallInfo.get(functionName);
+                                callInfo.endOfSubLine = targetLine;
+                                this.sendEvent(new OutputEvent(`[Debug] Function '${functionName}': call at line ${callInfo.callLine}, end at line ${targetLine}\n`));
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] Could not read source file to detect function info: ${e.message}\n`, 'stderr'));
+            }
+        }
+
+        // Now find addresses for function calls in ASM and calculate stepOutAddress
+        if (functionCallInfo.size > 0) {
+            try {
+                const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
+                for (const [functionName, callInfo] of functionCallInfo.entries()) {
+                    // Find the address of the call line
+                    if (this._basLineToAddress[callInfo.callLine]) {
+                        const callAddress = this._basLineToAddress[callInfo.callLine];
+                        const returnAddress = callAddress + 3; // Z80 CALL instruction is typically 3 bytes
+                        callInfo.callAddress = callAddress;
+                        callInfo.returnAddress = returnAddress;
+                        this.sendEvent(new OutputEvent(`[Debug] Function '${functionName}': call at 0x${callAddress.toString(16).toUpperCase()}, return at 0x${returnAddress.toString(16).toUpperCase()}\n`));
+                    }
+                }
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] Could not calculate function call addresses: ${e.message}\n`, 'stderr'));
+            }
+        }
+
         // Asegurarnos de tener el mapa asmLine->address
         if (!this._asmLineToAddress) {
             await this._buildAsmAddressMap(asmFile);
@@ -785,26 +893,49 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         try {
                 if (this._program) {
                     const outFile = this._program.replace(/\.tap$/i, '.linemap.json');
-                    // Persist reverse mapping: { '92BBH': '1', '92C8H': '2', ... }
-                    const reverseSimple = {};
+                    // Persist reverse mapping: { '92BBH': { borielLine: 1, sourceFile: '...', isEndOfSub: false }, ... }
+                    const reverseExtended = {};
                     // Also build runtime map addrDecimal -> basLine
                     this._addrToBasLine = {};
                     for (const k of basKeys) {
                         const addr = this._basLineToAddress[k];
                         if (addr !== undefined && addr !== null) {
                             const hex = addr.toString(16).toUpperCase();
-                            reverseSimple[`${hex}H`] = String(k);
+                            const borielLineNum = parseInt(k, 10);
+                            
+                            // Calculate stepOutAddress for endOfSub lines
+                            let stepOutAddress = null;
+                            if (endOfSubLines.has(borielLineNum)) {
+                                // Find which function this endOfSub belongs to
+                                for (const [functionName, callInfo] of functionCallInfo.entries()) {
+                                    if (callInfo.endOfSubLine === borielLineNum && callInfo.returnAddress) {
+                                        stepOutAddress = callInfo.returnAddress;
+                                        this.sendEvent(new OutputEvent(`[Debug] Line ${borielLineNum} (end of '${functionName}') gets stepOutAddress=0x${stepOutAddress.toString(16).toUpperCase()}\n`));
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            reverseExtended[`${hex}H`] = {
+                                borielLine: borielLineNum,
+                                sourceFile: sourceFile || null,
+                                isEndOfSub: endOfSubLines.has(borielLineNum),
+                                stepOutAddress: stepOutAddress
+                            };
                             try {
-                                this._addrToBasLine[parseInt(addr,10)] = parseInt(k,10);
+                                this._addrToBasLine[parseInt(addr,10)] = borielLineNum;
                             } catch (e) {}
                         }
                     }
-                    this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseSimple).length} entries:\n`));
-                    for (const [k, v] of Object.entries(reverseSimple)) {
-                        this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${v}\n`));
+                    this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseExtended).length} entries:\n`));
+                    for (const [k, v] of Object.entries(reverseExtended)) {
+                        this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${JSON.stringify(v)}\n`));
                     }
-                    fs.writeFileSync(outFile, JSON.stringify(reverseSimple, null, 2), 'utf8');
+                    fs.writeFileSync(outFile, JSON.stringify(reverseExtended, null, 2), 'utf8');
                     this.sendEvent(new OutputEvent(`[Debug] Persistido linemap reverse con direcciones en: ${outFile}\n`));
+
+                    // IMPORTANT: Update the in-memory _reverseLineMap to use the new extended format
+                    this._reverseLineMap = reverseExtended;
                 }
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] No se pudo persistir linemap: ${e.message}\n`, 'stderr'));
@@ -1411,13 +1542,25 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     /**
+     * Helper function to extract Boriel line number from reverse line map entry
+     * Handles both old format (number) and new format ({ borielLine, sourceFile, isEndOfSub })
+     */
+    _getBorielLineFromMapEntry(mapEntry) {
+        if (typeof mapEntry === 'object' && mapEntry !== null) {
+            return mapEntry.borielLine || null;
+        }
+        return mapEntry || null;
+    }
+
+    /**
      * Convierte una línea ASM a la línea de código Boriel correspondiente
      */
     _asmLineToBAsLine(asmLine) {
         if (!this._reverseLineMap) {
             return null;
         }
-        return this._reverseLineMap[asmLine] || null;
+        const entry = this._reverseLineMap[asmLine];
+        return this._getBorielLineFromMapEntry(entry);
     }
 
     /**
@@ -1652,7 +1795,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const pcMatch = line.match(/PC=([0-9A-Fa-f]{1,4})/);
                 if (pcMatch) {
                     const pc = parseInt(pcMatch[1], 16);
-                    this._lastPC = pc;
+                    // Solo actualizar si el PC realmente cambió
+                    if (pc !== this._lastPC) {
+                        this._previousPC = this._lastPC; // Guardar PC anterior
+                        this._lastPC = pc;
+                    }
                     // Parse other registers reported in the same line, e.g. SP=ff44 AF=5f89
                     const regs = {};
                     const regRe = /\b([A-Za-z]{1,3})=([0-9A-Fa-f]{1,4})\b/g;
@@ -1681,7 +1828,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         this.sendEvent(new OutputEvent(`[Debug] No hay mapeo directo para PC=0x${pc.toString(16).toUpperCase()}, usando fallback ASM...\n`));
                         const asmLine = this._addrToAsmLine(pc);
                         this._lastAsmLine = asmLine || null;
-                        mappedBasLine = (asmLine && this._reverseLineMap) ? (this._reverseLineMap[asmLine] || null) : null;
+                        mappedBasLine = asmLine ? this._getBorielLineFromMapEntry(this._reverseLineMap[asmLine]) : null;
                         if (mappedBasLine) {
                             this.sendEvent(new OutputEvent(`[Debug] Fallback: ASM line ${asmLine} -> Boriel line ${mappedBasLine}\n`));
                         }
@@ -1730,7 +1877,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const disMatch = line.match(/^\s*<?\s*([0-9A-Fa-f]{3,4})\s+/);
                     if (disMatch) {
                         const pc = parseInt(disMatch[1], 16);
-                        this._lastPC = pc;
+                        // Solo actualizar si el PC realmente cambió
+                        if (pc !== this._lastPC) {
+                            this._previousPC = this._lastPC; // Guardar PC anterior
+                            this._lastPC = pc;
+                        }
                         // clear/refresh registers map when seeing disassembly line (we don't have full regs here)
                         this._lastRegisters = Object.assign({}, this._lastRegisters || {}, { PC: pc });
                         
@@ -1749,7 +1900,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         if (!mappedBasLine) {
                             const asmLine = this._addrToAsmLine(pc);
                             this._lastAsmLine = asmLine || null;
-                            mappedBasLine = (asmLine && this._reverseLineMap) ? (this._reverseLineMap[asmLine] || null) : null;
+                            mappedBasLine = asmLine ? this._getBorielLineFromMapEntry(this._reverseLineMap[asmLine]) : null;
                         }
                         
                         if (!this._stopped) this._lastBasLine = mappedBasLine;
@@ -1830,7 +1981,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             }
 
                             if (asmLine && this._reverseLineMap) {
-                                basLine = this._reverseLineMap[asmLine] || null;
+                                basLine = this._getBorielLineFromMapEntry(this._reverseLineMap[asmLine]);
                             }
                         }
 
@@ -2074,9 +2225,155 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this.sendEvent(new StoppedEvent('pause', 1));
     }
 
+    /**
+     * Helper function to check if either current PC or previous PC has isEndOfSub flag
+     * This handles both scenarios: breakpoint directly on isEndOfSub line, and stepping into it
+     */
+    _checkIsEndOfSubAtCurrentOrPreviousPC() {
+        if (!this._reverseLineMap) {
+            this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] No reverseLineMap available.\n`));
+            return null;
+        }
+
+        this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] Current PC: 0x${this._lastPC?.toString(16).toUpperCase()}, Previous PC: 0x${this._previousPC?.toString(16).toUpperCase()}\n`));
+
+        // Check current PC first
+        if (this._lastPC) {
+            const currentAddrHex = `${this._lastPC.toString(16).toUpperCase()}H`;
+            const currentMapEntry = this._reverseLineMap[currentAddrHex];
+            this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] Checking current ${currentAddrHex}: ${JSON.stringify(currentMapEntry)}\n`));
+            if (currentMapEntry && currentMapEntry.isEndOfSub) {
+                this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] Found isEndOfSub=true at CURRENT PC 0x${this._lastPC.toString(16).toUpperCase()}\n`));
+                return {
+                    pc: this._lastPC,
+                    mapEntry: currentMapEntry,
+                    location: 'current'
+                };
+            }
+        }
+
+        // Check previous PC
+        if (this._previousPC) {
+            const previousAddrHex = `${this._previousPC.toString(16).toUpperCase()}H`;
+            const previousMapEntry = this._reverseLineMap[previousAddrHex];
+            this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] Checking previous ${previousAddrHex}: ${JSON.stringify(previousMapEntry)}\n`));
+            if (previousMapEntry && previousMapEntry.isEndOfSub) {
+                this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] Found isEndOfSub=true at PREVIOUS PC 0x${this._previousPC.toString(16).toUpperCase()}\n`));
+                return {
+                    pc: this._previousPC,
+                    mapEntry: previousMapEntry,
+                    location: 'previous'
+                };
+            }
+        }
+
+        this.sendEvent(new OutputEvent(`[Debug][_checkIsEndOfSubAtCurrentOrPreviousPC] No isEndOfSub found at current or previous PC.\n`));
+        return null;
+    }
+
     async nextRequest(response, args) {
+        this.sendEvent(new OutputEvent(`[Debug][nextRequest] ===== STEP OVER REQUEST INITIATED =====\n`));
         // Step Over: ir a la siguiente línea Boriel
         try {
+            // FAST EXIT OPTIMIZATION: Check if we're on the last line of a function (current OR previous PC)
+            let usedFastExit = false;
+            const endOfSubInfo = this._checkIsEndOfSubAtCurrentOrPreviousPC();
+            
+            if (endOfSubInfo) {
+                this.sendEvent(new OutputEvent(`[Debug][nextRequest] isEndOfSub=true detected at ${endOfSubInfo.location} PC 0x${endOfSubInfo.pc.toString(16).toUpperCase()}. Using fast exit strategy.\n`));
+                this.sendEvent(new OutputEvent(`[Debug][nextRequest] MapEntry: ${JSON.stringify(endOfSubInfo.mapEntry)}\n`));
+                
+                // IMPROVED STRATEGY: Use stepOutAddress if available for precise breakpoint + run
+                if (endOfSubInfo.mapEntry.stepOutAddress) {
+                    this.sendEvent(new OutputEvent(`[Debug][nextRequest] Using precise breakpoint + run strategy with stepOutAddress=0x${endOfSubInfo.mapEntry.stepOutAddress.toString(16).toUpperCase()}.\n`));
+                    
+                    try {
+                        const returnAddrHex = endOfSubInfo.mapEntry.stepOutAddress.toString(16).toUpperCase();
+                        
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Setting breakpoint at stepOutAddress 0x${returnAddrHex}\n`));
+                        
+                        // Set breakpoint at return address
+                        await this._sendCommandAndWait(`set-breakpoint 0x${returnAddrHex}`);
+                        
+                        // Run to the breakpoint
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Running to return address...\n`));
+                        await this._sendCommandAndWait('run');
+                        
+                        // Remove the temporary breakpoint
+                        await this._sendCommandAndWait(`remove-breakpoint 0x${returnAddrHex}`);
+                        
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Function exit completed using precise breakpoint strategy.\n`));
+                        usedFastExit = true;
+                        
+                        // Respond immediately since we've completed the step
+                        this._stopped = true;
+                        this.sendResponse(response);
+                        this.sendEvent(new StoppedEvent('step', 1));
+                        return;
+                        
+                    } catch (e) {
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Precise breakpoint strategy failed: ${e.message}. Falling back to step-over.\n`, 'stderr'));
+                    }
+                }
+                // FALLBACK: Try to estimate return address from previous PC
+                else if (endOfSubInfo.location === 'previous' && this._previousPC) {
+                    this.sendEvent(new OutputEvent(`[Debug][nextRequest] No stepOutAddress available, using estimated return address strategy.\n`));
+                    
+                    try {
+                        // Calculate return address: instruction after the CALL that brought us here
+                        // For Z80, CALL instructions are typically 3 bytes, but let's use a safer approach
+                        // We'll estimate the return address as previousPC + 3 (most CALL instructions)
+                        const returnAddress = this._previousPC + 3;
+                        const returnAddrHex = returnAddress.toString(16).toUpperCase();
+                        
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Setting breakpoint at estimated return address 0x${returnAddrHex}\n`));
+                        
+                        // Set breakpoint at return address
+                        await this._sendCommandAndWait(`set-breakpoint 0x${returnAddrHex}`);
+                        
+                        // Run to the breakpoint
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Running to return address...\n`));
+                        await this._sendCommandAndWait('run');
+                        
+                        // Remove the temporary breakpoint
+                        await this._sendCommandAndWait(`remove-breakpoint 0x${returnAddrHex}`);
+                        
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Function exit completed using estimated breakpoint strategy.\n`));
+                        usedFastExit = true;
+                        
+                        // Respond immediately since we've completed the step
+                        this._stopped = true;
+                        this.sendResponse(response);
+                        this.sendEvent(new StoppedEvent('step', 1));
+                        return;
+                        
+                    } catch (e) {
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Estimated breakpoint strategy failed: ${e.message}. Falling back to step-over.\n`, 'stderr'));
+                    }
+                }
+                
+                // FINAL FALLBACK STRATEGY: Single step-over and continue normal stepping
+                this.sendEvent(new OutputEvent(`[Debug][nextRequest] Using step-over fallback strategy for function exit.\n`));
+                try {
+                    // Step once to execute the return/exit instruction
+                    await this._sendCommandAndWait('cpu-step-over');
+                    usedFastExit = true;
+                    
+                    // Now continue with normal stepping logic to find the next Boriel line
+                    this.sendEvent(new OutputEvent(`[Debug][nextRequest] Function exit step completed. Continuing with normal step logic.\n`));
+                    // Don't return here - let it fall through to normal stepping logic
+                    
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug][nextRequest] Fast exit step failed: ${e.message}. Falling back to normal step.\n`, 'stderr'));
+                    // Fall through to normal logic
+                }
+            } else {
+                this.sendEvent(new OutputEvent(`[Debug][nextRequest] No isEndOfSub flag found at current or previous PC. Using normal step.\n`));
+            }
+
+            this.sendEvent(new OutputEvent(`[Debug][nextRequest] Proceeding with normal step over logic.\n`));
+
+            // NORMAL STEP OVER LOGIC: Continue with existing implementation
             // New strategy: perform CPU steps until the current PC matches one of the mapped addresses
             // We require the reverse mapping this._addrToBasLine to be present
             if (!this._addrToBasLine || Object.keys(this._addrToBasLine).length === 0) {
@@ -2087,16 +2384,19 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             // Ensure we are in step/cpu-step mode; try to enter if not
             // If we're already at the last mapped Boriel line, 'step over' should run
+            // UNLESS we just used the fast exit strategy - in that case continue stepping normally
             try {
                 const basKeys = this._basLineToAddress ? Object.keys(this._basLineToAddress).map(k => parseInt(k,10)).filter(n=>!isNaN(n)) : [];
                 const maxBas = basKeys.length ? Math.max(...basKeys) : null;
-                if (maxBas !== null && this._lastBasLine && parseInt(this._lastBasLine,10) === maxBas) {
+                if (!usedFastExit && maxBas !== null && this._lastBasLine && parseInt(this._lastBasLine,10) === maxBas) {
                     this.sendEvent(new OutputEvent(`[Debug] Step Over requested but current Boriel line ${this._lastBasLine} is last mapped line -> issuing run\n`));
                     setImmediate(async () => {
                         try { await this._sendCommand('run'); } catch (e) { this.sendEvent(new OutputEvent(`[Debug] Error issuing run: ${e.message}\n`, 'stderr')); }
                     });
                     this.sendResponse(response);
                     return;
+                } else if (usedFastExit) {
+                    this.sendEvent(new OutputEvent(`[Debug] Fast exit used - skipping auto-run and continuing with normal stepping.\n`));
                 }
             } catch (e) { /* ignore */ }
 
@@ -2159,6 +2459,25 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendResponse(response);
                 this.sendEvent(new StoppedEvent('step', 1));
                 return;
+            }
+
+            // FAST EXIT OPTIMIZATION FOR STEP INTO: Check if current or previous line has isEndOfSub
+            let usedFastExit = false;
+            const endOfSubInfo = this._checkIsEndOfSubAtCurrentOrPreviousPC();
+            
+            if (endOfSubInfo) {
+                this.sendEvent(new OutputEvent(`[Debug][stepInRequest] isEndOfSub=true detected at ${endOfSubInfo.location} PC 0x${endOfSubInfo.pc.toString(16).toUpperCase()}. Using fast exit strategy.\n`));
+                
+                try {
+                    // Use step-over to exit the function quickly
+                    await this._sendCommandAndWait('cpu-step-over');
+                    usedFastExit = true;
+                    
+                    this.sendEvent(new OutputEvent(`[Debug][stepInRequest] Function exit step completed. Continuing with normal step logic.\n`));
+                    
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug][stepInRequest] Fast exit step failed: ${e.message}. Falling back to normal step.\n`, 'stderr'));
+                }
             }
 
             // Ensure step mode
