@@ -2483,7 +2483,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Ensure step mode
             try { await this._sendCommandAndWait('enter-cpu-step'); } catch (e) { /* ignore */ }
 
-            const maxSteps = 2000;
+            const maxSteps = 4000;
             let steps = 0;
             let foundBasLine = null;
 
