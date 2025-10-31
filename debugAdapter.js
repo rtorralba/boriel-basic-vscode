@@ -739,92 +739,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._basLineToAddress = {};
         if (!asmFile || !fs.existsSync(asmFile)) return;
 
-        // Find original .bas source file to detect END SUB/FUNCTION and function calls
-        const sourceFile = this._sourceFile;
-        const endOfSubLines = new Set();
-        const functionCallInfo = new Map(); // Maps function name -> {callLine, callAddress}
 
-        if (sourceFile && fs.existsSync(sourceFile)) {
-            try {
-                const sourceContent = fs.readFileSync(sourceFile, 'utf8').split('\n');
-                
-                // First pass: detect function calls
-                for (let i = 0; i < sourceContent.length; i++) {
-                    const line = sourceContent[i].trim();
-                    // Look for function calls like: greetUser("Maria"), functionName(args), etc.
-                    const functionCallMatch = line.match(/(\w+)\s*\(/);
-                    if (functionCallMatch && !line.toUpperCase().includes('PRINT') && 
-                        !line.toUpperCase().includes('IF') && !line.toUpperCase().includes('FOR') &&
-                        !line.toUpperCase().includes('WHILE') && !line.toUpperCase().includes('DIM')) {
-                        const functionName = functionCallMatch[1];
-                        this.sendEvent(new OutputEvent(`[Debug] Detected function call '${functionName}' at line ${i + 1}\n`));
-                        functionCallInfo.set(functionName, { callLine: i + 1, callAddress: null });
-                    }
-                }
-                
-                // Second pass: detect END SUB/FUNCTION and match with calls
-                for (let i = 0; i < sourceContent.length; i++) {
-                    const line = sourceContent[i].trim().toUpperCase();
-                    if (line.startsWith('END SUB') || line.startsWith('END FUNCTION')) {
-                        // Find the function definition line
-                        let functionName = null;
-                        for (let j = i - 1; j >= 0; j--) {
-                            const prevLine = sourceContent[j].trim().toUpperCase();
-                            const subMatch = prevLine.match(/SUB\s+(\w+)/);
-                            const funcMatch = prevLine.match(/FUNCTION\s+(\w+)/);
-                            if (subMatch || funcMatch) {
-                                functionName = (subMatch || funcMatch)[1].toLowerCase();
-                                break;
-                            }
-                        }
-                        
-                        // The actual return happens on the line *before* the END SUB/FUNCTION
-                        // Let's find the last non-empty, non-comment line before the END SUB/FUNCTION
-                        let targetLine = -1;
-                        for (let j = i - 1; j >= 0; j--) {
-                            const prevLine = sourceContent[j].trim();
-                            if (prevLine && !prevLine.startsWith("'") && !prevLine.toUpperCase().startsWith("REM") &&
-                                !prevLine.toUpperCase().startsWith("SUB") && !prevLine.toUpperCase().startsWith("FUNCTION")) {
-                                targetLine = j + 1; // 1-based line number
-                                break;
-                            }
-                        }
-                        if (targetLine !== -1) {
-                            this.sendEvent(new OutputEvent(`[Debug] Detected end of sub/function '${functionName}' at line ${i+1}. Marking line ${targetLine} as isEndOfSub.\n`));
-                            endOfSubLines.add(targetLine);
-                            
-                            // Store function info for later stepOutAddress calculation
-                            if (functionName && functionCallInfo.has(functionName)) {
-                                const callInfo = functionCallInfo.get(functionName);
-                                callInfo.endOfSubLine = targetLine;
-                                this.sendEvent(new OutputEvent(`[Debug] Function '${functionName}': call at line ${callInfo.callLine}, end at line ${targetLine}\n`));
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] Could not read source file to detect function info: ${e.message}\n`, 'stderr'));
-            }
-        }
-
-        // Now find addresses for function calls in ASM and calculate stepOutAddress
-        if (functionCallInfo.size > 0) {
-            try {
-                const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
-                for (const [functionName, callInfo] of functionCallInfo.entries()) {
-                    // Find the address of the call line
-                    if (this._basLineToAddress[callInfo.callLine]) {
-                        const callAddress = this._basLineToAddress[callInfo.callLine];
-                        const returnAddress = callAddress + 3; // Z80 CALL instruction is typically 3 bytes
-                        callInfo.callAddress = callAddress;
-                        callInfo.returnAddress = returnAddress;
-                        this.sendEvent(new OutputEvent(`[Debug] Function '${functionName}': call at 0x${callAddress.toString(16).toUpperCase()}, return at 0x${returnAddress.toString(16).toUpperCase()}\n`));
-                    }
-                }
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] Could not calculate function call addresses: ${e.message}\n`, 'stderr'));
-            }
-        }
 
         // Asegurarnos de tener el mapa asmLine->address
         if (!this._asmLineToAddress) {
@@ -891,52 +806,33 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
         // Persist a small linemap with addresses next to existing linemap file if possible
         try {
-                if (this._program) {
-                    const outFile = this._program.replace(/\.tap$/i, '.linemap.json');
-                    // Persist reverse mapping: { '92BBH': { borielLine: 1, sourceFile: '...', isEndOfSub: false }, ... }
-                    const reverseExtended = {};
-                    // Also build runtime map addrDecimal -> basLine
-                    this._addrToBasLine = {};
-                    for (const k of basKeys) {
-                        const addr = this._basLineToAddress[k];
-                        if (addr !== undefined && addr !== null) {
-                            const hex = addr.toString(16).toUpperCase();
-                            const borielLineNum = parseInt(k, 10);
-                            
-                            // Calculate stepOutAddress for endOfSub lines
-                            let stepOutAddress = null;
-                            if (endOfSubLines.has(borielLineNum)) {
-                                // Find which function this endOfSub belongs to
-                                for (const [functionName, callInfo] of functionCallInfo.entries()) {
-                                    if (callInfo.endOfSubLine === borielLineNum && callInfo.returnAddress) {
-                                        stepOutAddress = callInfo.returnAddress;
-                                        this.sendEvent(new OutputEvent(`[Debug] Line ${borielLineNum} (end of '${functionName}') gets stepOutAddress=0x${stepOutAddress.toString(16).toUpperCase()}\n`));
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            reverseExtended[`${hex}H`] = {
-                                borielLine: borielLineNum,
-                                sourceFile: sourceFile || null,
-                                isEndOfSub: endOfSubLines.has(borielLineNum),
-                                stepOutAddress: stepOutAddress
-                            };
-                            try {
-                                this._addrToBasLine[parseInt(addr,10)] = borielLineNum;
-                            } catch (e) {}
-                        }
+            if (this._program) {
+                const outFile = this._program.replace(/\.tap$/i, '.linemap.json');
+                // Persist reverse mapping: { '92BBH': borielLine, ... }
+                const reverseMap = {};
+                // Also build runtime map addrDecimal -> basLine
+                this._addrToBasLine = {};
+                for (const k of basKeys) {
+                    const addr = this._basLineToAddress[k];
+                    if (addr !== undefined && addr !== null) {
+                        const hex = addr.toString(16).toUpperCase();
+                        const borielLineNum = parseInt(k, 10);
+                        reverseMap[`${hex}H`] = borielLineNum;
+                        try {
+                            this._addrToBasLine[parseInt(addr,10)] = borielLineNum;
+                        } catch (e) {}
                     }
-                    this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseExtended).length} entries:\n`));
-                    for (const [k, v] of Object.entries(reverseExtended)) {
-                        this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${JSON.stringify(v)}\n`));
-                    }
-                    fs.writeFileSync(outFile, JSON.stringify(reverseExtended, null, 2), 'utf8');
-                    this.sendEvent(new OutputEvent(`[Debug] Persistido linemap reverse con direcciones en: ${outFile}\n`));
-
-                    // IMPORTANT: Update the in-memory _reverseLineMap to use the new extended format
-                    this._reverseLineMap = reverseExtended;
                 }
+                this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseMap).length} entries:\n`));
+                for (const [k, v] of Object.entries(reverseMap)) {
+                    this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${JSON.stringify(v)}\n`));
+                }
+                fs.writeFileSync(outFile, JSON.stringify(reverseMap, null, 2), 'utf8');
+                this.sendEvent(new OutputEvent(`[Debug] Persistido linemap reverse con direcciones en: ${outFile}\n`));
+
+                // Update the in-memory _reverseLineMap to use the new format
+                this._reverseLineMap = reverseMap;
+            }
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] No se pudo persistir linemap: ${e.message}\n`, 'stderr'));
         }
