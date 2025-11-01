@@ -4,12 +4,14 @@ const net = require('net');
 const child_process = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { ZesaruxClient } = require('./debugAdapter/zesarux');
 
 class BorielBasicDebugSession extends LoggingDebugSession {
     constructor() {
         super("borielbasic-debug.txt");
         console.log('[BorielBasicDebug] Constructor llamado');
         this._zesaruxProcess = null;
+        this._zesarux = new ZesaruxClient(this);
         this._debugSocket = null;
         this._socketBuffer = '';
         this._pendingResponses = new Map();
@@ -160,6 +162,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             if (!zesaruxPath) {
                 console.error('[BorielBasic Debug] No se especificó zesaruxPath, buscando...');
                 const possiblePaths = [
+                    '/home/rtorralba/bin/zesarux/zesarux',
                     process.env.HOME + '/bin/zesarux/zesarux',
                     '/usr/bin/zesarux',
                     '/usr/local/bin/zesarux',
@@ -434,7 +437,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Conectar al protocolo de debug
             this.sendEvent(new OutputEvent(`Conectando al puerto ${debugPort}...\n`));
             try {
-                await this._connectToZesarux(debugPort);
+                await this._zesarux.connect(debugPort);
+                this._debugSocket = this._zesarux.getSocket();
                 this.sendEvent(new OutputEvent(`✓ Conectado a ZEsarUX en puerto ${debugPort}\n`));
             } catch (connectError) {
                 this.sendEvent(new OutputEvent(`✗ Error al conectar: ${connectError.message}\n`, 'stderr'));
@@ -1918,11 +1922,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async disconnectRequest(response, args) {
-        if (this._debugSocket) {
-            await this._sendCommand('quit');
-            this._debugSocket.destroy();
-            this._debugSocket = null;
-        }
+        await this._zesarux.disconnect();
+        this._debugSocket = null;
 
         if (this._zesaruxProcess) {
             this._zesaruxProcess.kill();
