@@ -1,19 +1,17 @@
+Dim varBasic As Ubyte
+
 Print "Hello, World!"
-Print "Hello, Pepe!"
-Print "Hello, Luis!"
 
-Dim score As Ubyte
-score = 85
+test(0)
 
-If score < 90 Then
-    greetUser("Maria")
-Else
-    Print "Hello, Jose!"
-End If
-
-Print "Hello, Antonio!"
-
-Sub greetUser(name As String)
-    Print "Hello, " + name + "!"
+Sub Fastcall test(address As Uinteger)
+    Do
+        ' Imprimimos la variable varBasic
+        Print AT 0,0;varBasic;" ";
+        ' La incrementamos en 1 desde ensamblador
+        Asm
+            ld hl,_varBasic
+            inc (hl)
+        End Asm
+    Loop
 End Sub
-
