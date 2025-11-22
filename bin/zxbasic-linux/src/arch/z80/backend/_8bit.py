@@ -1,13 +1,9 @@
-#!/usr/bin/python
-# vim: ts=4:sw=4:et
-
-# --------------------------------------------------------------
-# Copyleft (k) 2008, by Jose M. Rodriguez-Rosa
-# (a.k.a. Boriel, http://www.boriel.com)
-#
-# This module contains 8 bit boolean, arithmetic and
-# comparison intermediate-code translations
-# --------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from src.api.tmp_labels import tmp_label
 from src.arch.interface.quad import Quad
@@ -746,14 +742,13 @@ class Bits8:
             return output
 
         output = cls.get_oper(op1, op2)
-        # output.append('call __AND8')
+
         lbl = tmp_label()
         output.append("or a")
         output.append("jr z, %s" % lbl)
         output.append("ld a, h")
         output.append("%s:" % lbl)
         output.append("push af")
-        # REQUIRES.add('and8.asm')
 
         return output
 
@@ -1092,8 +1087,7 @@ class Bits8:
                 else:
                     output.append("ld (%s), a" % op)
                 return output
-            else:
-                output.append("pop hl")
+            output.append("pop hl")
 
             if indirect:
                 output.append("ld e, (hl)")
@@ -1112,8 +1106,7 @@ class Bits8:
         if is_int(value):
             if int(value) == 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("or a")
@@ -1127,8 +1120,7 @@ class Bits8:
         if is_int(value):
             if int(value) != 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("or a")
@@ -1155,8 +1147,7 @@ class Bits8:
         if is_int(value):
             if int(value) >= 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("add a, a")  # Puts sign into carry

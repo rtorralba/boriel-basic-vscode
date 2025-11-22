@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import re
 from functools import cached_property
 
@@ -14,7 +21,7 @@ class MemCell:
     the instruction.
     """
 
-    __slots__ = "addr", "__instr", "__dict__"
+    __slots__ = "__dict__", "__instr", "addr"
     __instr: Asm
 
     def __init__(self, instr: str, addr: int):

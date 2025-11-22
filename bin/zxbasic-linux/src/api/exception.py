@@ -1,23 +1,17 @@
-#!/usr/bin/env python
-# vim:ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
-
-
-# ------------------------- ERROR exception classes ---------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 __all__ = [
     "Error",
-    "InvalidOperatorError",
-    "InvalidLoopError",
-    "InvalidCONSTexpr",
-    "InvalidBuiltinFunctionError",
     "InternalError",
+    "InvalidBuiltinFunctionError",
+    "InvalidCONSTexpr",
+    "InvalidLoopError",
+    "InvalidOperatorError",
     "TempAlreadyFreedError",
 ]
 

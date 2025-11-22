@@ -1,5 +1,9 @@
-#!/usr/bin/python
-# vim: ts=4:sw=4:et:
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 __doc__ = """ A class for an identifier parsed by the preprocessor.
 It contains it's name, arguments and macro value.
@@ -8,8 +12,8 @@ It contains it's name, arguments and macro value.
 import copy
 import sys
 
-import src.zxbpp.prepro as prepro
 from src.api.debug import __DEBUG__
+from src.zxbpp import prepro
 
 from .macrocall import MacroCall
 from .output import CURRENT_FILE
@@ -22,7 +26,7 @@ class ID:
     (the ID name and value by default).
     """
 
-    __slots__ = "name", "value", "lineno", "fname", "args", "evaluating"
+    __slots__ = "args", "evaluating", "fname", "lineno", "name", "value"
 
     def __init__(self, id_: str, args=None, value=None, lineno: int = None, fname: str = None):
         if fname is None:

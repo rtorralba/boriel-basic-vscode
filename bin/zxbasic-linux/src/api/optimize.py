@@ -1,4 +1,10 @@
-#!/usr/bin/env python
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import symtable
 from collections.abc import Generator
 from typing import Any, NamedTuple
@@ -59,7 +65,7 @@ class GenericVisitor(NodeVisitor):
         if node.obj is None:
             return None
 
-        __DEBUG__(f"Optimizer: Visiting node {node.obj!s}", 1)
+        __DEBUG__(f"Optimizer: Visiting node {node.obj!s}[{node.obj.token}]", 1)
         meth = getattr(self, f"visit_{node.obj.token}", self.generic_visit)
         return meth(node.obj)
 
@@ -91,7 +97,7 @@ class UnreachableCodeVisitor(UniqueVisitor):
         if (
             node.class_ == CLASS.function
             and node.body.token == "BLOCK"
-            and (not node.body or node.body[-1].token not in ("CHKBREAK", "RETURN"))
+            and (not node.body or node.body[-1].token not in {"CHKBREAK", "LABEL", "RETURN"})
         ):
             # String functions must *ALWAYS* return a value.
             # Put a sentinel ("dummy") return "" sentence that will be removed if other is detected
@@ -420,10 +426,10 @@ class OptimizerVisitor(UniqueVisitor):
         body_ = node.children[4]
 
         if self.O_LEVEL > 0 and chk.is_number(from_, to_, step_) and not chk.is_block_accessed(body_):
-            if from_ > to_ and step_ > 0:
+            if from_.value > to_.value and step_.value > 0:
                 yield self.NOP
                 return
-            if from_ < to_ and step_ < 0:
+            if from_.value < to_.value and step_.value < 0:
                 yield self.NOP
                 return
 

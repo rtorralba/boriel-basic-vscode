@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import re
 from collections import UserDict
 from collections.abc import Mapping
@@ -411,7 +418,7 @@ class CPUState:
         if is_unknown8(val):
             val = f"{new_tmp_val()}{HL_SEP}{val}"
         assert is_num or is_unknown16(val) or is_label(val), (
-            f"val '{val}' is neither a number, nor a label" " nor an unknown16"
+            f"val '{val}' is neither a number, nor a label nor an unknown16"
         )
 
         self.regs[r] = val
@@ -466,14 +473,13 @@ class CPUState:
     def getv(self, r: str) -> int | None:
         """Like the above, but returns the <int> value or None."""
         v = self.get(r)
+        result: int | None = None
         if not is_unknown(v):
             try:
-                v = int(v)
+                result = int(v)
             except ValueError:
-                v = None
-        else:
-            v = None
-        return v
+                pass
+        return result
 
     def eq(self, r1: str, r2: str) -> bool:
         """True if values of r1 and r2 registers are equal"""

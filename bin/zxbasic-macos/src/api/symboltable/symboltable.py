@@ -1,13 +1,9 @@
-#!/usr/bin/env python
-# vim: ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
-
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from src.api import check as check
 from src.api import errmsg, global_
@@ -83,9 +79,9 @@ class SymbolTable:
         if scope is not None:
             return scope[id_]
 
-        for scope in self:
-            if scope[id_] is not None:
-                return scope[id_]
+        for s in self:
+            if s[id_] is not None:
+                return s[id_]
 
         return None  # Not found
 
@@ -361,6 +357,9 @@ class SymbolTable:
         # The entry was already declared. If it's type is auto and the default type is not None,
         # update its type.
         if default_type is not None and result.type_ == self.basic_types[TYPE.unknown]:
+            if default_type == self.basic_types[TYPE.boolean]:
+                default_type = self.basic_types[TYPE.ubyte]
+
             result.type_ = default_type
             warning_implicit_type(lineno, id_, default_type.name)
 
@@ -452,8 +451,8 @@ class SymbolTable:
             if entry.type_ != self.basic_types[TYPE.string]:
                 syntax_error_not_array_nor_func(lineno, id_)
                 return None
-            else:  # Ok, it is a string slice if it has 0 or 1 parameters
-                return entry
+            # Ok, it is a string slice if it has 0 or 1 parameters
+            return entry
 
         if entry.callable is None and entry.type_ == self.basic_types[TYPE.string]:
             # Ok, it is a string slice if it has 0 or 1 parameters
@@ -490,10 +489,10 @@ class SymbolTable:
             if entry_.scope == SCOPE.parameter:
                 syntax_error(
                     lineno,
-                    f"Variable '{id_}' already declared as a parameter " f"at {entry_.filename}:{entry_.lineno}",
+                    f"Variable '{id_}' already declared as a parameter at {entry_.filename}:{entry_.lineno}",
                 )
             else:
-                syntax_error(lineno, f"Variable '{id_}' already declared at " f"{entry_.filename}:{entry_.lineno}")
+                syntax_error(lineno, f"Variable '{id_}' already declared at {entry_.filename}:{entry_.lineno}")
             return None
 
         if not self.check_class(id_, class_, lineno, scope=self.current_scope):
@@ -523,7 +522,7 @@ class SymbolTable:
         if entry.type_ != type_:
             if not type_.implicit and entry.type_ is not None:
                 syntax_error(
-                    lineno, "'%s' suffix is for type '%s' but it was " "declared as '%s'" % (id_, entry.type_, type_)
+                    lineno, "'%s' suffix is for type '%s' but it was declared as '%s'" % (id_, entry.type_, type_)
                 )
                 return None
 
@@ -573,10 +572,10 @@ class SymbolTable:
             if entry.scope == SCOPE.parameter:
                 syntax_error(
                     lineno,
-                    "Constant '%s' already declared as a parameter " "at %s:%i" % (id_, entry.filename, entry.lineno),
+                    "Constant '%s' already declared as a parameter at %s:%i" % (id_, entry.filename, entry.lineno),
                 )
             else:
-                syntax_error(lineno, "Constant '%s' already declared at " "%s:%i" % (id_, entry.filename, entry.lineno))
+                syntax_error(lineno, "Constant '%s' already declared at %s:%i" % (id_, entry.filename, entry.lineno))
             return None
 
         entry = self.declare_variable(id_, lineno, type_, default_value, class_=CLASS.const)
@@ -598,7 +597,7 @@ class SymbolTable:
         entry = self.get_entry(id_)
         if entry is not None and entry.declared:
             if entry.is_line_number:
-                syntax_error(lineno, "Duplicated line number '%s'. " "Previous was at %i" % (entry.name, entry.lineno))
+                syntax_error(lineno, "Duplicated line number '%s'. Previous was at %i" % (entry.name, entry.lineno))
             else:
                 syntax_error(lineno, "Label '%s' already declared at line %i" % (id_, entry.lineno))
             return None
@@ -678,23 +677,21 @@ class SymbolTable:
         if not entry.declared:
             if entry.callable:
                 syntax_error(
-                    lineno, "Array '%s' must be declared before use. " "First used at line %i" % (id_, entry.lineno)
+                    lineno, "Array '%s' must be declared before use. First used at line %i" % (id_, entry.lineno)
                 )
                 return None
         else:
             if entry.scope == SCOPE.parameter:
-                syntax_error(
-                    lineno, "variable '%s' already declared as a " "parameter at line %i" % (id_, entry.lineno)
-                )
+                syntax_error(lineno, "variable '%s' already declared as a parameter at line %i" % (id_, entry.lineno))
             else:
-                syntax_error(lineno, "variable '%s' already declared at " "line %i" % (id_, entry.lineno))
+                syntax_error(lineno, "variable '%s' already declared at line %i" % (id_, entry.lineno))
             return None
 
         if entry.type_ != self.basic_types[TYPE.unknown] and entry.type_ != type_:
             if not type_.implicit:
                 syntax_error(
                     lineno,
-                    "Array suffix for '%s' is for type '%s' " "but declared as '%s'" % (entry.name, entry.type_, type_),
+                    "Array suffix for '%s' is for type '%s' but declared as '%s'" % (entry.name, entry.type_, type_),
                 )
                 return None
 

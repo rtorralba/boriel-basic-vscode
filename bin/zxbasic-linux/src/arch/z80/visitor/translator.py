@@ -1,12 +1,17 @@
-#!/usr/bin/env python
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-from collections import namedtuple
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
-import src.api.check as check
 import src.api.errmsg
 import src.api.global_ as gl
 import src.api.tmp_labels
-from src.api.config import OPTIONS
+from src.api import check
 from src.api.constants import CLASS, CONVENTION, SCOPE, TYPE
 from src.api.debug import __DEBUG__
 from src.api.errmsg import error
@@ -23,12 +28,20 @@ from src.arch.z80.visitor.builtin_translator import BuiltinTranslator
 from src.arch.z80.visitor.translator_visitor import JumpTable, TranslatorVisitor
 from src.arch.z80.visitor.unary_op_translator import UnaryOpTranslator
 from src.symbols import sym as symbols
+from src.symbols.arrayaccess import SymbolARRAYACCESS
+from src.symbols.binary import SymbolBINARY
 from src.symbols.id_ import ref
 from src.symbols.type_ import Type
 
-__all__ = ("Translator",)
+__all__ = (
+    "LabelledData",
+    "Translator",
+)
 
-LabelledData = namedtuple("LabelledData", ("label", "data"))
+
+class LabelledData(NamedTuple):
+    label: str
+    data: list[str]
 
 
 class Translator(TranslatorVisitor):
@@ -148,8 +161,29 @@ class Translator(TranslatorVisitor):
         yield node.right
 
         ins = {"PLUS": "add", "MINUS": "sub"}.get(node.operator, node.operator.lower())
-        s = self.TSUFFIX(node.left.type_)  # Operands type
-        self.emit(ins + s, node.t, str(node.left.t), str(node.right.t))
+        ins_t: dict[str, Callable[[TYPE | symbols.BASICTYPE, Any, Any, Any], None]] = {
+            "add": self.ic_add,
+            "sub": self.ic_sub,
+            "mul": self.ic_mul,
+            "div": self.ic_div,
+            "or": self.ic_or,
+            "xor": self.ic_xor,
+            "and": self.ic_and,
+            "eq": self.ic_eq,
+            "ne": self.ic_ne,
+            "gt": self.ic_gt,
+            "lt": self.ic_lt,
+            "le": self.ic_le,
+            "ge": self.ic_ge,
+            "band": self.ic_band,
+            "bor": self.ic_bor,
+            "bxor": self.ic_bxor,
+            "shl": self.ic_shl,
+            "shr": self.ic_shr,
+            "pow": self.ic_pow,
+            "mod": self.ic_mod,
+        }
+        ins_t[ins](node.left.type_, node.t, str(node.left.t), str(node.right.t))
 
     def visit_TYPECAST(self, node):
         yield node.operand
@@ -175,15 +209,6 @@ class Translator(TranslatorVisitor):
         for i in range(len(node) - 1, -1, -1):  # visit in reverse order
             yield node[i]
 
-            if (
-                isinstance(node.parent, symbols.ARRAYACCESS)
-                and OPTIONS.array_check
-                and node.parent.entry.scope != SCOPE.parameter
-            ):
-                upper = node.parent.entry.bounds[i].upper
-                lower = node.parent.entry.bounds[i].lower
-                self.ic_param(gl.PTR_TYPE, upper - lower)
-
     def visit_ARGUMENT(self, node):
         if not node.byref:
             if node.value.token == "VAR" and node.type_.is_dynamic and node.value.t[0] == "$":
@@ -196,7 +221,10 @@ class Translator(TranslatorVisitor):
             else:
                 yield node.value
             self.ic_param(node.type_, node.t)
-        else:
+            return
+
+        # ByRef argument
+        if node.value.token not in ("ARRAYLOAD", "ARRAYACCESS"):
             scope = node.value.scope
             if node.t[0] == "_":
                 t = optemps.new_t()
@@ -215,6 +243,22 @@ class Translator(TranslatorVisitor):
                 self.ic_paddr(-node.value.offset, t)
 
             self.ic_param(TYPE.uinteger, t)
+            return
+
+        # Must compute Address of @array(...)
+        if node.value.scope == SCOPE.global_ and self.O_LEVEL > 1:  # Calculate offset if global variable
+            node.value = SymbolBINARY.make_node(
+                "PLUS",
+                symbols.UNARY("ADDRESS", node.value.entry, node.value.lineno, type_=self.TYPE(gl.PTR_TYPE)),
+                symbols.NUMBER(node.value.offset, lineno=node.value.lineno, type_=self.TYPE(gl.PTR_TYPE)),
+                lineno=node.lineno,
+                func=lambda x, y: x + y,
+            )
+        else:
+            node.value = SymbolARRAYACCESS.copy_from(node.value)
+            node.value = symbols.UNARY("ADDRESS", node.value, node.lineno, type_=self.TYPE(gl.PTR_TYPE))
+
+        yield node.value
 
     def visit_ARRAYLOAD(self, node):
         scope = node.entry.scope
@@ -450,6 +494,10 @@ class Translator(TranslatorVisitor):
         self.runtime_call(RuntimeLabel.RESTORE, 0)
 
     def visit_READ(self, node):
+        if not gl.DATAS:
+            src.api.errmsg.syntax_error_no_data_defined(node.lineno)
+            return
+
         self.ic_fparam(TYPE.ubyte, "#" + str(self.DATA_TYPES[self.TSUFFIX(node.args[0].type_)]))
         self.runtime_call(RuntimeLabel.READ, node.args[0].type_.size)
 
@@ -779,6 +827,7 @@ class Translator(TranslatorVisitor):
 
             self.ic_fparam(i.type_, i.t)
             label = {
+                "bool": RuntimeLabel.PRINTU8,
                 "i8": RuntimeLabel.PRINTI8,
                 "u8": RuntimeLabel.PRINTU8,
                 "i16": RuntimeLabel.PRINTI16,
@@ -991,14 +1040,12 @@ class Translator(TranslatorVisitor):
             if type_.size == 1:  # U/byte
                 if expr.type_.size != 1:
                     return [f"#({val}) & 0xFF"]
-                else:
-                    return [f"#{val}"]
+                return [f"#{val}"]
 
             if type_.size == 2:  # U/integer
                 if expr.type_.size != 2:
                     return [f"##({val}) & 0xFFFF"]
-                else:
-                    return [f"##{val}"]
+                return [f"##{val}"]
 
             if type_ == cls.TYPE(TYPE.fixed):
                 return ["0000", f"##({val}) & 0xFFFF"]

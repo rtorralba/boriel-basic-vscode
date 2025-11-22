@@ -1,13 +1,9 @@
-#!/usr/bin/env python
-# vim:ts=4:sw=4:et:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
-
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from src.api import config, errmsg, global_
 from src.api.constants import CLASS, SCOPE
@@ -15,24 +11,24 @@ from src.symbols import sym as symbols
 from src.symbols.symbol_ import Symbol
 from src.symbols.type_ import Type
 
-__all__ = [
-    "check_type",
-    "check_is_declared_explicit",
+__all__ = (
     "check_and_make_label",
-    "check_type_is_explicit",
     "check_call_arguments",
+    "check_is_declared_explicit",
     "check_pending_calls",
     "check_pending_labels",
-    "is_number",
+    "check_type",
+    "check_type_is_explicit",
+    "common_type",
     "is_const",
-    "is_static",
-    "is_string",
-    "is_numeric",
     "is_dynamic",
     "is_null",
+    "is_number",
+    "is_numeric",
+    "is_static",
+    "is_string",
     "is_unsigned",
-    "common_type",
-]
+)
 
 
 # ----------------------------------------------------------------------
@@ -92,7 +88,7 @@ def check_type_is_explicit(lineno: int, id_: str, type_):
             errmsg.syntax_error_undeclared_type(lineno, id_)
 
 
-def check_call_arguments(lineno: int, id_: str, args):
+def check_call_arguments(lineno: int, id_: str, args, filename: str):
     """Check arguments against function signature.
 
     Checks every argument in a function call against a function.
@@ -110,14 +106,14 @@ def check_call_arguments(lineno: int, id_: str, args):
     param_names = {x.name for x in entry.ref.params}
     for arg in args:
         if arg.name is not None and arg.name not in param_names:
-            errmsg.error(lineno, f"Unexpected argument '{arg.name}'", fname=entry.filename)
+            errmsg.error(lineno, f"Unexpected argument '{arg.name}'", fname=filename)
             return False
 
     last_arg_name = None
     for arg, param in zip(args, entry.ref.params):
         if last_arg_name is not None and arg.name is None:
             errmsg.error(
-                lineno, f"Positional argument cannot go after keyword argument '{last_arg_name}'", fname=entry.filename
+                lineno, f"Positional argument cannot go after keyword argument '{last_arg_name}'", fname=filename
             )
             return False
 
@@ -140,15 +136,13 @@ def check_call_arguments(lineno: int, id_: str, args):
 
     for arg in args:
         if arg.name is None:
-            errmsg.error(lineno, f"Too many arguments for Function '{id_}'", fname=entry.filename)
+            errmsg.error(lineno, f"Too many arguments for Function '{id_}'", fname=filename)
             return False
 
     if len(named_args) != len(entry.ref.params):
         c = "s" if len(entry.ref.params) != 1 else ""
         errmsg.error(
-            lineno,
-            f"Function '{id_}' takes {len(entry.ref.params)} parameter{c}, not {len(args)}",
-            fname=entry.filename,
+            lineno, f"Function '{id_}' takes {len(entry.ref.params)} parameter{c}, not {len(args)}", fname=filename
         )
         return False
 
@@ -163,13 +157,13 @@ def check_call_arguments(lineno: int, id_: str, args):
             return False
 
         if param.byref:
-            if not isinstance(arg.value, symbols.ID):
+            if not isinstance(arg.value, (symbols.ID, symbols.ARRAYLOAD)):
                 errmsg.error(
                     lineno, "Expected a variable name, not an expression (parameter By Reference)", fname=arg.filename
                 )
                 return False
 
-            if arg.class_ not in (CLASS.var, CLASS.array):
+            if arg.class_ not in (CLASS.var, CLASS.array, CLASS.unknown):
                 errmsg.error(lineno, "Expected a variable or array name (parameter By Reference)")
                 return False
 
@@ -196,8 +190,8 @@ def check_pending_calls():
     result = True
 
     # Check for functions defined after calls (parameters, etc)
-    for id_, params, lineno in global_.FUNCTION_CALLS:
-        result = result and check_call_arguments(lineno, id_, params)
+    for call in global_.FUNCTION_CALLS:
+        result = result and check_call_arguments(call.lineno, call.entry.original_name, call.args, call.filename)
 
     return result
 
@@ -407,7 +401,7 @@ def is_temporary_value(node) -> bool:
     return node.token not in ("STRING", "VAR") and node.t[0] not in ("_", "#")
 
 
-def common_type(a, b):
+def common_type(a: symbols.TYPE | Type | None, b: symbols.TYPE | Type | None) -> symbols.TYPE | Type | None:
     """Returns a type which is common for both a and b types.
     Returns None if no common types allowed.
     """
@@ -436,7 +430,7 @@ def common_type(a, b):
     assert a.is_basic
     assert b.is_basic
 
-    types = (a, b)
+    types = a, b
 
     if Type.float_ in types:
         return Type.float_

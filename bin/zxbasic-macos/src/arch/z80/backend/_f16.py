@@ -1,12 +1,10 @@
-#!/usr/bin/python
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-# --------------------------------------------------------------
-# Copyleft (k) 2008, by Jose M. Rodriguez-Rosa
-# (a.k.a. Boriel, http://www.boriel.com)
-#
-# This module contains cls.f16 (fixed) bit boolean, arithmetic and
-# comparison intermediate-code translations
-# --------------------------------------------------------------
 from src.arch.interface.quad import Quad
 
 from ._32bit import Bits32
@@ -195,9 +193,9 @@ class Fixed16:
         as they are.
         """
         quads = list(ins)
-        for i, ins in enumerate(quads[1:], 1):
-            if is_float(ins):
-                de, hl = cls.f16(ins)
+        for i, instruction in enumerate(quads[1:], 1):
+            if is_float(instruction):
+                de, hl = cls.f16(instruction)
                 quads[i] = str((de << 16) | hl)
 
         ins = Quad(*quads)
@@ -451,8 +449,7 @@ class Fixed16:
         if is_float(value):
             if float(value) == 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("ld a, h")
@@ -471,8 +468,7 @@ class Fixed16:
         if is_float(value):
             if float(value) != 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("ld a, h")

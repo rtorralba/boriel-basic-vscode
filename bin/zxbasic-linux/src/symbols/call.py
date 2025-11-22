@@ -1,19 +1,15 @@
-#!/usr/bin/env python
-# vim: ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from collections.abc import Iterable
 from typing import Optional
 
-import src.api.check as check
-import src.api.errmsg as errmsg
 import src.api.global_ as gl
+from src.api import check, errmsg
 from src.api.constants import CLASS
 from src.symbols.arglist import SymbolARGLIST
 from src.symbols.argument import SymbolARGUMENT
@@ -42,8 +38,8 @@ class SymbolCALL(Symbol):
         super().__init__()
         self.entry = entry
         self.args = arglist  # Func. call / array access
-        self.lineno = lineno
-        self.filename = filename
+        self.lineno: int = lineno
+        self.filename: str = filename
 
         ref = entry.ref
         if isinstance(ref, FuncRef):
@@ -97,17 +93,13 @@ class SymbolCALL(Symbol):
                 return None
 
         if entry.declared and not entry.forwarded:
-            check.check_call_arguments(lineno, id_, params)
+            check.check_call_arguments(lineno, id_, params, filename)
         else:  # All functions goes to global scope by default
             if entry.token != "FUNCTION":
                 entry = entry.to_function(lineno)
             gl.SYMBOL_TABLE.move_to_global_scope(id_)
-            gl.FUNCTION_CALLS.append(
-                (
-                    id_,
-                    params,
-                    lineno,
-                )
-            )
+            result = cls(entry, params, lineno, filename)
+            gl.FUNCTION_CALLS.append(result)
+            return result
 
         return cls(entry, params, lineno, filename)

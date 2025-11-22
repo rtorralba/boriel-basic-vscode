@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
@@ -9,6 +16,7 @@ from src.api.debug import __DEBUG__
 from src.api.utils import flatten_list, sfirst
 from src.arch.z80.backend.common import ASMS
 from src.arch.z80.peephole import evaluator
+from src.arch.z80.peephole.engine import OptPattern
 from src.arch.z80.peephole.evaluator import FN
 
 from .cpustate import CPUState
@@ -427,6 +435,9 @@ class BasicBlock(Sequence[MemCell]):
         """Tries to detect peep-hole patterns in this basic block
         and remove them.
         """
+        i: int
+        p: OptPattern
+
         if self.optimized:
             return
 

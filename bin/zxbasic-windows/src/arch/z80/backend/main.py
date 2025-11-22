@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from __future__ import annotations
 
 import re
@@ -100,7 +107,6 @@ from ._pload import (
 # String comparison functions
 # String arithmetic functions
 from ._str import String
-from .common import runtime_call
 from .generic import (
     _call,
     _cast,
@@ -130,7 +136,6 @@ from .icinfo import ICInfo
 from .icinstruction import ICInstruction
 from .quad import Quad
 from .runtime import NAMESPACE
-from .runtime import Labels as RuntimeLabel
 
 __all__ = ("Backend",)
 
@@ -145,7 +150,7 @@ class Backend(BackendInterface):
 
     def _set_quad_table(self):
         """Lowlevel (to ASM) instructions implementation"""
-        self._QUAD_TABLE = {
+        self._QUAD_TABLE: dict[ICInstruction, ICInfo] = {
             ICInstruction.ADDU8: ICInfo(3, Bits8.add8),
             ICInstruction.ADDI8: ICInfo(3, Bits8.add8),
             ICInstruction.ADDI16: ICInfo(3, Bits16.add16),
@@ -663,9 +668,7 @@ class Backend(BackendInterface):
         output.append("exx")
         output.append("push hl")
         output.append("exx")
-        output.append("ld hl, 0")
-        output.append("add hl, sp")
-        output.append(f"ld ({common.CALL_BACK}), hl")
+        output.append(f"ld ({common.CALL_BACK}), sp")
         output.append("ei")
 
         output.extend(f"call {x}" for x in sorted(common.INITS))
@@ -676,16 +679,6 @@ class Backend(BackendInterface):
         output.extend(heap_init)
 
         return output
-
-    @staticmethod
-    def emit_cast_to_bool():
-        """Convert a byte value to boolean (0 or 1) if
-        the global flag strictBool is True
-        """
-        if not OPTIONS.strict_bool:
-            return []
-
-        return ["pop af", runtime_call(RuntimeLabel.NORMALIZE_BOOLEAN), "push af"]
 
     @staticmethod
     def emit_epilogue() -> list[str]:
@@ -780,9 +773,6 @@ class Backend(BackendInterface):
         output: list[str] = []
         for quad in self.MEMORY:
             self._output_join(output, self._QUAD_TABLE[quad.instr].func(quad), optimize=optimize)
-            # If it is a boolean operation convert it to 0/1 if the STRICT_BOOL flag is True
-            if common.RE_BOOL.match(quad.instr):
-                self._output_join(output, self.emit_cast_to_bool(), optimize=optimize)
 
         if optimize and OPTIONS.optimization_level > 1:
             self.remove_unused_labels(output)

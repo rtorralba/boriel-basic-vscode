@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from dataclasses import dataclass
 
 from src.arch.z80.backend.icinstruction import ICInstruction
@@ -10,7 +17,7 @@ __all__ = ("Quad",)
 class Quad:
     """Implements a Quad code instruction."""
 
-    instr: str
+    instr: ICInstruction
     args: tuple[str, ...]
 
     def __init__(self, instr: ICInstruction, *args) -> None:

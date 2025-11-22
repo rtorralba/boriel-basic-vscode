@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import argparse
 import os
 import re
@@ -432,7 +439,7 @@ def load_mmu(filename: str, bank8k: str | int | None = None, address8k: str | No
         if bank8k != (current_bank << 1):
             current_address += 0x2000
 
-    print(f"File '{filename}' 8K bank {bank8k}" f"(16K bank {current_bank}, {'%04x' % current_address})")
+    print(f"File '{filename}' 8K bank {bank8k}(16K bank {current_bank}, {'%04x' % current_address})")
     add_file(filename)
 
 

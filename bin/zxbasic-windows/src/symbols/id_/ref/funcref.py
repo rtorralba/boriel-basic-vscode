@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from src.api.constants import CLASS, CONVENTION
 from src.symbols.block import SymbolBLOCK
 from src.symbols.id_.interface import SymbolIdABC as SymbolID
@@ -6,7 +13,7 @@ from src.symbols.paramlist import SymbolPARAMLIST
 
 
 class FuncRef(SymbolRef):
-    __slots__ = "_class", "convention", "forwarded", "locals_size", "local_symbol_table", "params_size"
+    __slots__ = "_class", "convention", "forwarded", "local_symbol_table", "locals_size", "params_size"
 
     def __init__(self, parent: SymbolID, lineno: int | None, class_: CLASS):
         assert class_ in (CLASS.function, CLASS.sub, CLASS.unknown)

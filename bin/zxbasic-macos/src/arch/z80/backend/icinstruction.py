@@ -1,3 +1,11 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
+from enum import StrEnum
 from functools import lru_cache
 from typing import Any
 
@@ -7,7 +15,7 @@ __all__ = ("ICInstruction",)
 
 
 # HINT: Do not use Enums here. They cannot be subclassed
-class ICInstruction:
+class ICInstruction(StrEnum):
     ADDU8 = "addu8"
     ADDI8 = "addi8"
     ADDI16 = "addi16"

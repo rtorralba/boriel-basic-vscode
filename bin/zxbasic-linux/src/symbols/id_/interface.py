@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from abc import ABC, abstractmethod
 
 from src.api.constants import CLASS, SCOPE
@@ -6,7 +13,7 @@ from src.symbols.type_ import SymbolTYPE
 
 
 class SymbolIdABC(Symbol, ABC):
-    __slots__ = ()
+    __slots__ = "lineno", "mangled", "name", "scope"
 
     scope: SCOPE
     name: str
