@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from __future__ import annotations
 
 import argparse
@@ -5,7 +12,7 @@ from enum import StrEnum
 
 from src import arch
 from src.api import errmsg
-from src.api.config import OPTIONS
+from src.api.config import OPTIONS, OptimizationStrategy
 
 from .version import VERSION
 
@@ -44,7 +51,7 @@ def parser() -> argparse.ArgumentParser:
         "-O",
         "--optimize",
         type=int,
-        help="Sets optimization level. " f"0 = None (default level is {OPTIONS.optimization_level}",
+        help=f"Sets optimization level. 0 = None (default level is {OPTIONS.optimization_level}",
     )
     parser_.add_argument(
         "-o",
@@ -73,7 +80,7 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Sets output format to .asm. DEPRECATED. Use -f",
     )
-    parser_.add_argument(
+    output_file_type_group.add_argument(
         "-E",
         "--emit-backend",
         action="store_true",
@@ -86,7 +93,7 @@ def parser() -> argparse.ArgumentParser:
         "-f",
         "--output-format",
         type=str,
-        choices=FileType,
+        choices=[str(x) for x in FileType],
         required=False,
         help="Output format",
     )
@@ -117,7 +124,7 @@ def parser() -> argparse.ArgumentParser:
         "-Z",
         "--sinclair",
         action="store_true",
-        help="Enable by default some more original ZX Spectrum Sinclair BASIC features:" " ATTR, SCREEN$, POINT",
+        help="Enable by default some more original ZX Spectrum Sinclair BASIC features: ATTR, SCREEN$, POINT",
     )
     parser_.add_argument(
         "-H", "--heap-size", type=int, help=f"Sets heap size in bytes (default {OPTIONS.heap_size} bytes)"
@@ -125,7 +132,9 @@ def parser() -> argparse.ArgumentParser:
     parser_.add_argument("--heap-address", type=str, default=None, help="Sets the heap address.")
     parser_.add_argument("--debug-memory", action="store_true", default=None, help="Enables out-of-memory debug")
     parser_.add_argument("--debug-array", action="store_true", default=None, help="Enables array boundary checking")
-    parser_.add_argument("--strict-bool", action="store_true", default=None, help="Enforce boolean values to be 0 or 1")
+    parser_.add_argument(
+        "--strict-bool", action="store_true", default=None, help="Enforce boolean values to be 0 or 1 (Deprecated)"
+    )
     parser_.add_argument("--enable-break", action="store_true", help="Enables program execution BREAK detection")
 
     parser_.add_argument(
@@ -202,5 +211,11 @@ def parser() -> argparse.ArgumentParser:
         "-F", "--config-file", type=str, default=OPTIONS.project_filename, help="Loads config from config file"
     )
     parser_.add_argument("--save-config", type=str, help="Save options into a config file")
+    parser_.add_argument(
+        "--opt-strategy",
+        choices=[str(x) for x in OptimizationStrategy],
+        default=OptimizationStrategy.Auto,
+        help=f"Optimization strategy (optimize for speed or size). Default: {OptimizationStrategy.Auto}",
+    )
 
     return parser_

@@ -1,17 +1,13 @@
-#!/usr/bin/python3
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-#
-# This is the Lexer for the ZXBppASM (ZXBASM Preprocessor)
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import os
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum, unique
 
@@ -24,9 +20,9 @@ from src.zxbpp.prepro.definestable import DefinesTable
 EOL = "\n"
 
 # Names for std input/output
-STDOUT = "<stdout>"
-STDIN = "<stdin>"
-STDERR = "<stderr>"
+STDERR = "(stderr)"
+STDIN = "(stdin)"
+STDOUT = "(stdout)"
 
 
 @unique
@@ -89,6 +85,10 @@ class BaseLexer:
 
         for macro_name, macro_func in self.builtin_macros.items():
             self.defines_table[macro_name] = BuiltinMacro(macro_name=macro_name, func=macro_func)
+
+    def set_macro(self, macro_name: str, func: Callable[[str], str]) -> None:
+        assert self.defines_table is not None
+        self.defines_table[macro_name] = func
 
     def put_current_line(self, prefix: str = "", suffix: str = "") -> str:
         """Returns line and file for include / end of include sequences."""

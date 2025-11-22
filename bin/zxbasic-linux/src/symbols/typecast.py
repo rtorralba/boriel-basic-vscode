@@ -1,12 +1,9 @@
-#!/usr/bin/python
-# vim: ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from src.api import check, errmsg
 from src.api.errmsg import error
@@ -88,7 +85,10 @@ class SymbolTYPECAST(Symbol):
         if check.is_const(node):
             node = SymbolNUMBER(node.value, node.lineno, node.type_)
 
-        if new_type.is_basic and not TYPE.is_integral(new_type):  # not an integer
+        if new_type == TYPE.boolean:
+            node.value = int(bool(node.value))
+            new_type = TYPE.ubyte  # For the moment we'll use UByte externally
+        elif new_type.is_basic and not TYPE.is_integral(new_type):  # not an integer
             node.value = float(node.value)
         else:  # It's an integer
             new_val = int(node.value) & ((1 << (8 * new_type.size)) - 1)  # Mask it

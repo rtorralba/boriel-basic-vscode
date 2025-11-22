@@ -1,12 +1,16 @@
-#!/usr/bin/env python
-# vim:ts=4:et:sw=4:
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import copy
 import re
 from typing import Union
 
-import src.zxbpp.prepro as prepro
 from src.api.debug import __DEBUG__
+from src.zxbpp import prepro
 
 from .exceptions import PreprocError
 
@@ -20,7 +24,7 @@ class MacroCall:
     it value.
     """
 
-    __slots__ = "table", "id_", "callargs", "lineno", "fname"
+    __slots__ = "callargs", "fname", "id_", "lineno", "table"
 
     def __init__(self, fname: str, lineno: int, table: "prepro.DefinesTable", id_: Union["MacroCall", str], args=None):
         """Initializes the object with the ID table, the ID name and

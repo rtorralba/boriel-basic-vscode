@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from src.api.config import OPTIONS
 from src.arch.z80.backend import (
     HI16,
@@ -12,7 +19,6 @@ from src.arch.z80.backend import (
 from src.arch.z80.backend import Backend as Z80Backend
 
 __all__ = (
-    "Float",
     "HI16",
     "INITS",
     "LO16",
@@ -21,6 +27,7 @@ __all__ = (
     "TMP_COUNTER",
     "TMP_STORAGES",
     "Backend",
+    "Float",
 )
 
 

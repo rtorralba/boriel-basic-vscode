@@ -1,24 +1,21 @@
 #!/usr/bin/env python
-# vim: et:ts=4:sw=4:
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-#
-# This is the Parser for the ZXBASM (ZXBasic Assembler)
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import os
 
 import src.api.utils
-import src.ply.yacc as yacc
 from src import outfmt
 from src.api import global_ as gl
 from src.api.config import OPTIONS
 from src.api.debug import __DEBUG__
 from src.api.errmsg import error, warning
+from src.ply import yacc
 from src.zxbasm import asmlex, basic
 from src.zxbasm import global_ as asm_gl
 from src.zxbasm.asm import Asm, Container

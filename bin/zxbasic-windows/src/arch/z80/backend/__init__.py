@@ -1,4 +1,9 @@
-#!/usr/bin/env python
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from src.arch.z80.optimizer.helpers import HI16, LO16
 from src.arch.z80.peephole import engine
@@ -19,10 +24,13 @@ from .icinfo import ICInfo
 from .main import Backend
 
 __all__ = (
+    "Backend",
+    "Bits8",
     "Bits16",
     "Float",
-    "INITS",
     "HI16",
+    "ICInfo",
+    "INITS",
     "LO16",
     "MAIN_LABEL",
     "MEMINITS",
@@ -30,8 +38,5 @@ __all__ = (
     "START_LABEL",
     "TMP_COUNTER",
     "TMP_STORAGES",
-    "Backend",
     "engine",
-    "ICInfo",
-    "Bits8",
 )

@@ -1,16 +1,12 @@
-#!/usr/bin/env python
-# vim: ts=4:et:sw=4:
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
-
-import src.api.check as check
-import src.api.config as config
 import src.api.global_ as gl
+from src.api import check, config
 from src.symbols.binary import SymbolBINARY as BINARY
 from src.symbols.number import SymbolNUMBER as NUMBER
 from src.symbols.string_ import SymbolSTRING as STRING

@@ -1,18 +1,16 @@
-#!/usr/bin/python
-# vim: ts=4:et:sw=4:
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
 from __future__ import annotations
 
 from collections import Counter
 
 import src.api.global_
-from src.ast import Ast
+from src.ast import Ast, Tree
 
 
 class Symbol(Ast):
@@ -81,7 +79,7 @@ class Symbol(Ast):
     def is_needed(self) -> bool:
         return len(self.required_by) > 0
 
-    def get_parent(self, type_) -> Symbol | None:
+    def get_parent(self, type_) -> Tree | None:
         """Traverse parents until finding one
         of type type_ or None if not found.
         If a cycle is detected an undetermined value is returned as parent.

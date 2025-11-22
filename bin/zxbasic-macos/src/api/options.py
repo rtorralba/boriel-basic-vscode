@@ -1,20 +1,23 @@
-#!/usr/bin/env python
-# vim: ts=4:sw=4:et:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import enum
 import json
-from typing import Any
+from enum import StrEnum
+from typing import Any, Final
 
 from src.api.exception import Error
 
-__all__ = ["Option", "Options", "ANYTYPE", "Action"]
+__all__: Final[tuple[str, ...]] = (
+    "ANYTYPE",
+    "Action",
+    "Option",
+    "Options",
+)
 
 
 class ANYTYPE:
@@ -52,7 +55,7 @@ class OptionStackUnderflowError(Error):
         return "Cannot pop option '%s'. Option stack is empty" % self.option
 
 
-class InvalidValueError(Error):
+class InvalidValueError(ValueError, Error):
     def __init__(self, option_name, _type, value):
         self.option = option_name
         self.value = value
@@ -160,7 +163,7 @@ class Option:
 # Options commands
 # ----------------------------------------------------------------------
 @enum.unique
-class Action(str, enum.Enum):
+class Action(StrEnum):
     ADD = "add"
     ADD_IF_NOT_DEFINED = "add_if_not_defined"
     CLEAR = "clear"
@@ -267,7 +270,7 @@ class Options:
         if args[0] == Action.CLEAR:
             check_allowed_args(Action.CLEAR, kwargs, {})
             self._options.clear()
-            return
+            return None
 
         # list
         if args[0] == Action.LIST:
@@ -283,7 +286,7 @@ class Options:
             kwargs["type_"] = kwargs["type"]
             del kwargs["type"]
             self.__add_option(**kwargs)
-            return
+            return None
 
         if args[0] == Action.ADD_IF_NOT_DEFINED:
             kwargs["type"] = kwargs.get("type")

@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from typing import NamedTuple
 
 import src.api.global_ as gl
@@ -117,7 +124,7 @@ class TranslatorVisitor(TranslatorInstVisitor):
 
     # This function must be called before emit_strings
     def emit_data_blocks(self):
-        if not gl.DATA_IS_USED:
+        if not gl.DATA_IS_USED or not gl.DATAS:
             return  # nothing to do
 
         for label_, datas in gl.DATAS:
@@ -139,12 +146,9 @@ class TranslatorVisitor(TranslatorInstVisitor):
                 else:
                     self.ic_data(d.value.type_, [self.traverse_const(d.value)])
 
-        if not gl.DATAS:  # The above loop was not executed, because there's no data
-            self.ic_label("__DATA__0")
-        else:
-            missing_data_labels = set(gl.DATA_LABELS_REQUIRED).difference([x.label.name for x in gl.DATAS])
-            for data_label in missing_data_labels:
-                self.ic_label(data_label)  # A label reference by a RESTORE beyond the last DATA line
+        missing_data_labels = set(gl.DATA_LABELS_REQUIRED).difference([x.label.name for x in gl.DATAS])
+        for data_label in missing_data_labels:
+            self.ic_label(data_label)  # A label reference by a RESTORE beyond the last DATA line
 
         self.ic_vard("__DATA__END", ["00"])
 
@@ -189,7 +193,7 @@ class TranslatorVisitor(TranslatorInstVisitor):
                     result = TranslatorVisitor.traverse_const(node.operand)
                 else:
                     syntax_error_not_constant(node.operand.lineno)
-                    return
+                    return None
             else:
                 raise InvalidOperatorError(mid)
             return result
@@ -226,10 +230,7 @@ class TranslatorVisitor(TranslatorInstVisitor):
             if node.type_ == Type.fixed:
                 return "((" + TranslatorVisitor.traverse_const(node.operand) + ") & 0xFFFF) << 16"
             syntax_error_cant_convert_to_type(node.lineno, str(node.operand), node.type_)
-            return
-
-        if node.token == "VARARRAY":
-            return node.data_label
+            return None
 
         if node.token in ("CONST", "VAR", "LABEL", "FUNCTION"):
             # TODO: Check what happens with local vars and params
@@ -241,7 +242,7 @@ class TranslatorVisitor(TranslatorInstVisitor):
         if node.token == "ARRAYACCESS":
             return f"({node.entry.data_label} + {node.offset})"
 
-        if node.token == "ID" and node.has_address and node.scope == SCOPE.global_:
+        if node.token in ("ID", "VARARRAY") and node.has_address and node.scope == SCOPE.global_:
             return node.mangled
 
         raise InvalidCONSTexpr(node)

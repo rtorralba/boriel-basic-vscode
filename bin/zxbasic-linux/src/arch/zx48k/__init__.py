@@ -1,5 +1,9 @@
-#!/usr/bin/env python
-# vim:ts=4:et:sw=4:
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import src.api.global_
 from src.api.constants import TYPE
@@ -12,12 +16,12 @@ from src.arch.z80 import (
 )
 from src.arch.zx48k import backend  # noqa
 
-__all__ = [
-    "beep",
-    "VarTranslator",
+__all__ = (
     "FunctionTranslator",
     "Translator",
-]
+    "VarTranslator",
+    "beep",
+)
 
 
 # -----------------------------------------

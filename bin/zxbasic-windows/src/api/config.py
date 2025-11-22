@@ -1,21 +1,18 @@
-#!/usr/bin/env python
-# vim:ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import configparser
 import enum
 import os
 import sys
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 
-from src.api import errmsg, global_, options
+from src.api import errmsg, global_, options, python_version_check
 from src.api.options import ANYTYPE, Action
 
 # The options container
@@ -25,14 +22,21 @@ from src.api.options import ANYTYPE, Action
 # Common setup and configuration for all tools
 # ------------------------------------------------------
 @enum.unique
-class ConfigSections(str, Enum):
+class ConfigSections(StrEnum):
     ZXBC = "zxbc"
     ZXBASM = "zxbasm"
     ZXBPP = "zxbpp"
 
 
 @enum.unique
-class OPTION(str, Enum):
+class OptimizationStrategy(StrEnum):
+    Size = "size"
+    Speed = "speed"
+    Auto = "auto"
+
+
+@enum.unique
+class OPTION(StrEnum):
     OUTPUT_FILENAME = "output_filename"
     INPUT_FILENAME = "input_filename"
     STDERR_FILENAME = "stderr_filename"
@@ -76,6 +80,9 @@ class OPTION(str, Enum):
     # ASM Options
     ASM_ZXNEXT = "zxnext"
     FORCE_ASM_BRACKET = "force_asm_brackets"
+
+    # Optimization Preferences
+    OPT_STRATEGY = "opt_strategy"
 
 
 OPTIONS = options.Options()
@@ -181,6 +188,7 @@ def save_config_into_file(
 
 def init() -> None:
     """Default Options and Compilation Flags"""
+    python_version_check.init()
     OPTIONS(Action.CLEAR)
 
     OPTIONS(Action.ADD, name=OPTION.OUTPUT_FILENAME, type=str)
@@ -225,6 +233,15 @@ def init() -> None:
 
     # Whether to show WXXX warning codes or not
     OPTIONS(Action.ADD, name=OPTION.HIDE_WARNING_CODES, type=bool, default=False, ignore_none=True)
+
+    # Optimization preferences
+    OPTIONS(
+        Action.ADD,
+        name=OPTION.OPT_STRATEGY,
+        type=OptimizationStrategy,
+        default=OptimizationStrategy.Auto,
+        ignore_none=True,
+    )
 
     OPTIONS(
         Action.ADD,

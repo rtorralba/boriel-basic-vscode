@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-# vim: ts=4:sw=4:et:
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-#
-# This is the Parser for the ZXBpp (ZXBasic Preprocessor)
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import argparse
 import os
@@ -22,6 +19,7 @@ from src import arch
 from src.api import config, global_, utils
 from src.ply import yacc
 from src.zxbpp import zxbasmpplex, zxbpplex
+from src.zxbpp.base_pplex import STDIN
 from src.zxbpp.prepro import ID, Arg, ArgList, DefinesTable, MacroCall, output
 from src.zxbpp.prepro.builtinmacro import BuiltinMacro
 from src.zxbpp.prepro.exceptions import PreprocError
@@ -111,8 +109,7 @@ def reset_id_table():
         ID_TABLE.define(name, value=val, lineno=0)
 
     for macro_name, macro_func in LEXER.builtin_macros.items():
-        # FIXME
-        LEXER.defines_table[macro_name] = BuiltinMacro(macro_name=macro_name, func=macro_func)  # type: ignore[index]
+        LEXER.set_macro(macro_name, BuiltinMacro(macro_name=macro_name, func=macro_func))
 
 
 def init():
@@ -124,7 +121,7 @@ def init():
     global IFDEFS
 
     config.OPTIONS(config.Action.ADD_IF_NOT_DEFINED, name="debug_zxbpp", type=bool, default=False)
-    global_.FILENAME = "(stdin)"
+    global_.FILENAME = STDIN
     OUTPUT = ""
     INCLUDED = {}
     CURRENT_DIR = ""
@@ -846,7 +843,7 @@ def p_error(p):
                 output.CURRENT_FILE[-1],
             )
     else:
-        config.OPTIONS.stderr.write("General syntax error at preprocessor " "(unexpected End of File?)")
+        config.OPTIONS.stderr.write("General syntax error at preprocessor (unexpected End of File?)")
     global_.has_errors += 1
 
 
@@ -882,7 +879,7 @@ def main(argv):
     if config.OPTIONS.sinclair:
         included_file = search_filename("sinclair.bas", 0, local_first=False)
         if not included_file:
-            return
+            return None
 
         OUTPUT += include_once(included_file, 0, local_first=False)
         if OUTPUT and OUTPUT[-1] != "\n":
@@ -971,8 +968,7 @@ def entry_point(args=None):
     config.OPTIONS.expected_warnings = options.expect_warnings
 
     if options.arch not in arch.AVAILABLE_ARCHITECTURES:
-        parser.error(f"Invalid architecture '{options.arch}'")
-        return 2
+        parser.error(f"Invalid architecture '{options.arch}'")  # Exits with error
 
     config.OPTIONS.architecture = options.arch
 
@@ -980,9 +976,10 @@ def entry_point(args=None):
         config.OPTIONS.stderr_filename = options.stderr
         config.OPTIONS.stderr = utils.open_file(config.OPTIONS.stderr_filename, "wt", "utf-8")
 
-    _, ext = os.path.splitext(options.input_file)
-    if ext.lower() == "asm":
-        setMode(PreprocMode.ASM)
+    if options.input_file:
+        _, ext = os.path.splitext(options.input_file)
+        if ext.lower() == "asm":
+            setMode(PreprocMode.ASM)
 
     result = main([options.input_file] if options.input_file else [])
     if not global_.has_errors:  # ok?

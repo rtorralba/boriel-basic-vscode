@@ -1,12 +1,9 @@
-#!/usr/bin/env python
-# vim: ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import sys
 from collections.abc import Callable
@@ -16,7 +13,13 @@ from src.api import config, global_
 from src.api.constants import CLASS
 
 # Exports only these functions. Others
-__all__ = ["error", "is_valid_warning_code", "warning", "warning_not_used", "register_warning"]
+__all__ = (
+    "error",
+    "is_valid_warning_code",
+    "register_warning",
+    "warning",
+    "warning_not_used",
+)
 
 
 WARNING_PREFIX: str = ""  # will be prepended to warning messages
@@ -107,7 +110,7 @@ def warning_command_line_flag_deprecation(flag: str) -> None:
     """Warning signaling command line flag is deprecated.
     This is a special warning that can't be silenced, and needs no line number nor filename.
     """
-    # msg_output(f"WARNING: deprecated flag {flag}")  # TODO: To be enabled upon 1.18+
+    msg_output(f"WARNING: deprecated flag {flag}")  # TODO: To be enabled upon 1.18+
 
 
 # region [Warnings]
