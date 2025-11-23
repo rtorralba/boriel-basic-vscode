@@ -205,6 +205,54 @@ function activate(context) {
         }
     };
 
+    // Registrar hover provider antes de iniciar el LSP
+    const hoverProvider = vscode.languages.registerHoverProvider('borielbasic', {
+        async provideHover(document, position, token) {
+            // Obtener la palabra en la posición actual
+            const wordRange = document.getWordRangeAtPosition(position);
+            const word = wordRange ? document.getText(wordRange) : '';
+
+            // Intentar obtener información del LSP si está disponible
+            if (client && client.state === 2) { // 2 = Running
+                try {
+                    const params = {
+                        textDocument: {
+                            uri: document.uri.toString()
+                        },
+                        position: {
+                            line: position.line,
+                            character: position.character
+                        }
+                    };
+
+                    const result = await client.sendRequest('textDocument/hover', params);
+
+                    if (result && result.contents) {
+                        // Extraer el contenido del LSP
+                        let lspContent;
+                        if (typeof result.contents === 'string') {
+                            lspContent = result.contents;
+                        } else if (Array.isArray(result.contents)) {
+                            lspContent = result.contents.map(c => typeof c === 'string' ? c : c.value).join('\n\n');
+                        } else if (result.contents.value) {
+                            lspContent = result.contents.value;
+                        } else {
+                            lspContent = JSON.stringify(result.contents);
+                        }
+
+                        return new vscode.Hover(new vscode.MarkdownString(lspContent), result.range);
+                    }
+                } catch (error) {
+                    console.error('[Boriel Basic] Error al obtener hover del LSP:', error);
+                }
+            }
+
+            // Si el LSP no devolvió información, retornar null (no mostrar hover)
+            return null;
+        }
+    });
+    context.subscriptions.push(hoverProvider);
+
     // Crear el cliente LSP
     client = new LanguageClient(
         'borielBasicLanguageServer',
@@ -216,54 +264,7 @@ function activate(context) {
     // Iniciar el cliente
     client.start();
 
-    // Registrar el proveedor de hover
-    const hoverProvider = vscode.languages.registerHoverProvider('borielbasic', {
-        async provideHover(document, position, token) {
-            // Esperar a que el cliente esté listo
-            await client.onReady();
 
-            // Preparar los parámetros para la solicitud de hover
-            const params = {
-                textDocument: {
-                    uri: document.uri.toString()
-                },
-                position: {
-                    line: position.line,
-                    character: position.character
-                }
-            };
-
-            try {
-                // Enviar la solicitud de hover al servidor LSP
-                const result = await client.sendRequest('textDocument/hover', params);
-
-                if (result && result.contents) {
-                    // Convertir el contenido a MarkdownString si es necesario
-                    let contents;
-                    if (typeof result.contents === 'string') {
-                        contents = new vscode.MarkdownString(result.contents);
-                    } else if (Array.isArray(result.contents)) {
-                        contents = new vscode.MarkdownString(result.contents.join('\n\n'));
-                    } else if (result.contents.kind === 'markdown') {
-                        contents = new vscode.MarkdownString(result.contents.value);
-                    } else if (result.contents.kind === 'plaintext') {
-                        contents = result.contents.value;
-                    } else if (result.contents.value) {
-                        contents = new vscode.MarkdownString(result.contents.value);
-                    } else {
-                        contents = new vscode.MarkdownString(JSON.stringify(result.contents));
-                    }
-
-                    // Crear y devolver el objeto Hover
-                    return new vscode.Hover(contents);
-                }
-            } catch (error) {
-                console.error('Error al obtener información de hover:', error);
-            }
-
-            return null;
-        }
-    });
 
     // Registrar el comando "borielBasic.compile"
     const compileCommand = vscode.commands.registerCommand('borielBasic.compile', () => {
@@ -275,7 +276,7 @@ function activate(context) {
         updateLSP(context);
     });
 
-    context.subscriptions.push(hoverProvider, compileCommand);
+    context.subscriptions.push(compileCommand, updateLSPCommand);
 }
 
 function deactivate() {
