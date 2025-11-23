@@ -216,6 +216,55 @@ function activate(context) {
     // Iniciar el cliente
     client.start();
 
+    // Registrar el proveedor de hover
+    const hoverProvider = vscode.languages.registerHoverProvider('borielbasic', {
+        async provideHover(document, position, token) {
+            // Esperar a que el cliente esté listo
+            await client.onReady();
+
+            // Preparar los parámetros para la solicitud de hover
+            const params = {
+                textDocument: {
+                    uri: document.uri.toString()
+                },
+                position: {
+                    line: position.line,
+                    character: position.character
+                }
+            };
+
+            try {
+                // Enviar la solicitud de hover al servidor LSP
+                const result = await client.sendRequest('textDocument/hover', params);
+
+                if (result && result.contents) {
+                    // Convertir el contenido a MarkdownString si es necesario
+                    let contents;
+                    if (typeof result.contents === 'string') {
+                        contents = new vscode.MarkdownString(result.contents);
+                    } else if (Array.isArray(result.contents)) {
+                        contents = new vscode.MarkdownString(result.contents.join('\n\n'));
+                    } else if (result.contents.kind === 'markdown') {
+                        contents = new vscode.MarkdownString(result.contents.value);
+                    } else if (result.contents.kind === 'plaintext') {
+                        contents = result.contents.value;
+                    } else if (result.contents.value) {
+                        contents = new vscode.MarkdownString(result.contents.value);
+                    } else {
+                        contents = new vscode.MarkdownString(JSON.stringify(result.contents));
+                    }
+
+                    // Crear y devolver el objeto Hover
+                    return new vscode.Hover(contents);
+                }
+            } catch (error) {
+                console.error('Error al obtener información de hover:', error);
+            }
+
+            return null;
+        }
+    });
+
     // Registrar el comando "borielBasic.compile"
     const compileCommand = vscode.commands.registerCommand('borielBasic.compile', () => {
         compileBorielBasic();
@@ -226,7 +275,7 @@ function activate(context) {
         updateLSP(context);
     });
 
-    context.subscriptions.push(compileCommand);
+    context.subscriptions.push(hoverProvider, compileCommand);
 }
 
 function deactivate() {
