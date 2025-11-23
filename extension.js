@@ -570,6 +570,10 @@ function activate(context) {
         launchZesaruxCommand
     );
     console.log('[Extension] DebugAdapterDescriptorFactory registrado para borielbasic');
+
+    // Registrar comandos adicionales en las suscripciones del contexto
+    context.subscriptions.push(compileCommand, updateLSPCommand);
+
     console.log('[Extension] activate FIN');
     // Eliminada la factory Dezog, ahora el arranque es por comando
 }
@@ -590,7 +594,7 @@ class InlineDebugAdapterFactory {
     }
 }
 
-context.subscriptions.push(compileCommand, updateLSPCommand);
+
 
 function deactivate() {
     if (!client) {
