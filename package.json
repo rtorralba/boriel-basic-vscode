@@ -5,7 +5,7 @@
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
     "version": "1.0.20",
     "author": "Raül Torralba (Juntelart)",
-    "license": "MIT",
+    "license": "AGPL-3.0",
     "publisher": "rtorralba",
     "repository": {
         "type": "git",
