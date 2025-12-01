@@ -186,6 +186,11 @@ async function ensureZXP2BorielInstalled(context) {
     });
 }
 
+function getExportFormHTML(context) {
+    const htmlPath = path.join(context.extensionPath, 'resources', 'export_form.html');
+    return fs.readFileSync(htmlPath, 'utf-8');
+}
+
 async function exportZXPToBoriel(uri, context) {
     try {
         // Check if zxp2boriel is installed, and install if needed
@@ -195,132 +200,103 @@ async function exportZXPToBoriel(uri, context) {
         }
 
         const inputFile = uri.fsPath;
+        const inputFileName = path.basename(inputFile, '.zxp');
 
-        // Ask for width parameter
-        const width = await vscode.window.showInputBox({
-            prompt: 'Tile width in pixels (must be multiple of 8)',
-            placeHolder: '8',
-            validateInput: (value) => {
-                const num = parseInt(value);
-                if (isNaN(num) || num <= 0 || num % 8 !== 0) {
-                    return 'Width must be a positive number and multiple of 8';
-                }
-                return null;
-            }
-        });
-        if (!width) return;
-
-        // Ask for rows parameter
-        const rows = await vscode.window.showInputBox({
-            prompt: 'Number of rows in the sprite sheet',
-            placeHolder: '1',
-            validateInput: (value) => {
-                const num = parseInt(value);
-                if (isNaN(num) || num <= 0) {
-                    return 'Rows must be a positive number';
-                }
-                return null;
-            }
-        });
-        if (!rows) return;
-
-        // Ask for cols parameter
-        const cols = await vscode.window.showInputBox({
-            prompt: 'Number of columns in the sprite sheet',
-            placeHolder: '6',
-            validateInput: (value) => {
-                const num = parseInt(value);
-                if (isNaN(num) || num <= 0) {
-                    return 'Columns must be a positive number';
-                }
-                return null;
-            }
-        });
-        if (!cols) return;
-
-        // Ask for array name
-        const name = await vscode.window.showInputBox({
-            prompt: 'Name prefix for the generated array variables',
-            placeHolder: 'sprite',
-            validateInput: (value) => {
-                if (!value || value.trim().length === 0) {
-                    return 'Name cannot be empty';
-                }
-                if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
-                    return 'Name must be a valid identifier (letters, numbers, underscore)';
-                }
-                return null;
-            }
-        });
-        if (!name) return;
-
-        // Ask if attributes should be skipped
-        const skipAttributes = await vscode.window.showQuickPick(
-            ['Include attributes', 'Skip attributes (--no-attributes)'],
+        // Create a webview panel
+        const panel = vscode.window.createWebviewPanel(
+            'zxpExport',
+            'Export ZXP to Boriel Basic',
+            vscode.ViewColumn.One,
             {
-                placeHolder: 'Do you want to include color attributes?'
+                enableScripts: true,
+                retainContextWhenHidden: true
             }
         );
-        if (!skipAttributes) return;
 
-        // Ask where to save the output file
-        const outputUri = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file(path.join(path.dirname(inputFile), `${name}.bas`)),
-            filters: {
-                'Boriel Basic Files': ['bas'],
-                'All Files': ['*']
-            }
-        });
-        if (!outputUri) return;
+        // Set the webview's HTML content
+        panel.webview.html = getExportFormHTML(context);
 
-        const outputFile = outputUri.fsPath;
+        // Handle messages from the webview
+        panel.webview.onDidReceiveMessage(
+            async message => {
+                switch (message.command) {
+                    case 'cancel':
+                        panel.dispose();
+                        return;
 
-        // Build the command
-        const args = [
-            '-i', `"${inputFile}"`,
-            '-w', width,
-            '-r', rows,
-            '-c', cols,
-            '-o', `"${outputFile}"`,
-            '-n', name
-        ];
+                    case 'export':
+                        const { width, rows, cols, name, skipAttributes } = message;
 
-        if (skipAttributes.includes('--no-attributes')) {
-            args.push('--no-attributes');
-        }
-
-        const command = `"${pythonPath}" -m zxp2boriel ${args.join(' ')}`;
-        console.log(`Executing command: ${command}`);
-
-        // Show progress
-        await vscode.window.withProgress(
-            {
-                location: vscode.ProgressLocation.Notification,
-                title: "Exporting ZXP to Boriel Basic...",
-                cancellable: false
-            },
-            async (progress) => {
-                return new Promise((resolve, reject) => {
-                    child_process.exec(command, (error, stdout, stderr) => {
-                        if (error) {
-                            vscode.window.showErrorMessage(`Error exporting ZXP: ${stderr || error.message}`);
-                            console.error(`Error: ${stderr}`);
-                            reject(error);
-                            return;
-                        }
-
-                        vscode.window.showInformationMessage(`ZXP exported successfully to ${path.basename(outputFile)}`);
-                        console.log(`Output: ${stdout}`);
-
-                        // Open the generated file
-                        vscode.workspace.openTextDocument(outputFile).then(doc => {
-                            vscode.window.showTextDocument(doc);
+                        // Ask where to save the output file
+                        const outputUri = await vscode.window.showSaveDialog({
+                            defaultUri: vscode.Uri.file(path.join(path.dirname(inputFile), `${name}.bas`)),
+                            filters: {
+                                'Boriel Basic Files': ['bas'],
+                                'All Files': ['*']
+                            }
                         });
 
-                        resolve();
-                    });
-                });
-            }
+                        if (!outputUri) {
+                            return; // User cancelled save dialog
+                        }
+
+                        const outputFile = outputUri.fsPath;
+
+                        // Close the panel
+                        panel.dispose();
+
+                        // Build the command
+                        const args = [
+                            '-i', `"${inputFile}"`,
+                            '-w', width,
+                            '-r', rows,
+                            '-c', cols,
+                            '-o', `"${outputFile}"`,
+                            '-n', name
+                        ];
+
+                        if (skipAttributes) {
+                            args.push('--no-attributes');
+                        }
+
+                        const command = `"${pythonPath}" -m zxp2boriel ${args.join(' ')}`;
+                        console.log(`Executing command: ${command}`);
+
+                        // Show progress
+                        await vscode.window.withProgress(
+                            {
+                                location: vscode.ProgressLocation.Notification,
+                                title: "Exporting ZXP to Boriel Basic...",
+                                cancellable: false
+                            },
+                            async (progress) => {
+                                return new Promise((resolve, reject) => {
+                                    child_process.exec(command, (error, stdout, stderr) => {
+                                        if (error) {
+                                            vscode.window.showErrorMessage(`Error exporting ZXP: ${stderr || error.message}`);
+                                            console.error(`Error: ${stderr}`);
+                                            reject(error);
+                                            return;
+                                        }
+
+                                        vscode.window.showInformationMessage(`ZXP exported successfully to ${path.basename(outputFile)}`);
+                                        console.log(`Output: ${stdout}`);
+
+                                        // Open the generated file
+                                        vscode.workspace.openTextDocument(outputFile).then(doc => {
+                                            vscode.window.showTextDocument(doc);
+                                        });
+
+                                        resolve();
+                                    });
+                                });
+                            }
+                        );
+                        return;
+                }
+            },
+            undefined,
+            context.subscriptions
         );
 
     } catch (error) {
