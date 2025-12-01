@@ -108,8 +108,22 @@
                 "command": "borielBasic.updateLSP",
                 "title": "Actualizar Boriel Basic LSP",
                 "category": "Boriel Basic"
+            },
+            {
+                "command": "borielBasic.exportZXPToBoriel",
+                "title": "Export to Boriel Basic",
+                "category": "Boriel Basic"
             }
-        ]
+        ],
+        "menus": {
+            "explorer/context": [
+                {
+                    "when": "resourceExtname == .zxp",
+                    "command": "borielBasic.exportZXPToBoriel",
+                    "group": "navigation"
+                }
+            ]
+        }
     },
     "icon": "images/logo.jpg",
     "dependencies": {

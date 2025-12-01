@@ -86,6 +86,249 @@ function compileBorielBasic() {
     });
 }
 
+
+async function ensureZXP2BorielInstalled(context) {
+    const venvPath = path.join(context.extensionPath, 'venv');
+    const pythonPath = process.platform === 'win32'
+        ? path.join(venvPath, 'Scripts', 'python.exe')
+        : path.join(venvPath, 'bin', 'python3');
+    const pipPath = process.platform === 'win32'
+        ? path.join(venvPath, 'Scripts', 'pip.exe')
+        : path.join(venvPath, 'bin', 'pip');
+
+    return new Promise(async (resolve, reject) => {
+        // Check if venv exists
+        if (!fs.existsSync(venvPath)) {
+            const createVenv = await vscode.window.showWarningMessage(
+                'No se ha encontrado un entorno virtual para zxp2boriel. ¿Deseas crearlo ahora?',
+                'Sí, crear',
+                'No'
+            );
+
+            if (createVenv !== 'Sí, crear') {
+                vscode.window.showInformationMessage('Operación cancelada.');
+                reject(false);
+                return;
+            }
+
+            // Create venv
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: "Creando entorno virtual...",
+                    cancellable: false
+                },
+                async (progress) => {
+                    return new Promise((venvResolve, venvReject) => {
+                        child_process.exec(`python3 -m venv "${venvPath}"`, (error, stdout, stderr) => {
+                            if (error) {
+                                vscode.window.showErrorMessage(`Error al crear entorno virtual: ${stderr || error.message}`);
+                                console.error('Venv creation error:', stderr);
+                                venvReject(false);
+                                reject(false);
+                                return;
+                            }
+                            console.log('Venv created successfully');
+                            venvResolve(true);
+                        });
+                    });
+                }
+            );
+        }
+
+        // Check if zxp2boriel is installed in the venv
+        child_process.exec(`"${pythonPath}" -m zxp2boriel --help`, (error, stdout, stderr) => {
+            if (!error) {
+                // Already installed
+                resolve(pythonPath);
+                return;
+            }
+
+            // Not installed, ask user if they want to install it
+            vscode.window.showWarningMessage(
+                'La librería zxp2boriel no está instalada en el entorno virtual. ¿Deseas instalarla ahora?',
+                'Sí, instalar',
+                'No'
+            ).then(async (choice) => {
+                if (choice === 'Sí, instalar') {
+                    // Install zxp2boriel in venv
+                    await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: "Instalando zxp2boriel...",
+                            cancellable: false
+                        },
+                        async (progress) => {
+                            return new Promise((installResolve, installReject) => {
+                                child_process.exec(`"${pipPath}" install zxp2boriel`, (installError, installStdout, installStderr) => {
+                                    if (installError) {
+                                        vscode.window.showErrorMessage(`Error al instalar zxp2boriel: ${installStderr || installError.message}`);
+                                        console.error('Installation error:', installStderr);
+                                        installReject(false);
+                                        reject(false);
+                                        return;
+                                    }
+
+                                    vscode.window.showInformationMessage('zxp2boriel instalado correctamente.');
+                                    console.log('Installation output:', installStdout);
+                                    installResolve(true);
+                                    resolve(pythonPath);
+                                });
+                            });
+                        }
+                    );
+                } else {
+                    vscode.window.showInformationMessage('Instalación cancelada. No se puede exportar sin zxp2boriel.');
+                    reject(false);
+                }
+            });
+        });
+    });
+}
+
+async function exportZXPToBoriel(uri, context) {
+    try {
+        // Check if zxp2boriel is installed, and install if needed
+        const pythonPath = await ensureZXP2BorielInstalled(context);
+        if (!pythonPath) {
+            return; // User cancelled or installation failed
+        }
+
+        const inputFile = uri.fsPath;
+
+        // Ask for width parameter
+        const width = await vscode.window.showInputBox({
+            prompt: 'Tile width in pixels (must be multiple of 8)',
+            placeHolder: '8',
+            validateInput: (value) => {
+                const num = parseInt(value);
+                if (isNaN(num) || num <= 0 || num % 8 !== 0) {
+                    return 'Width must be a positive number and multiple of 8';
+                }
+                return null;
+            }
+        });
+        if (!width) return;
+
+        // Ask for rows parameter
+        const rows = await vscode.window.showInputBox({
+            prompt: 'Number of rows in the sprite sheet',
+            placeHolder: '1',
+            validateInput: (value) => {
+                const num = parseInt(value);
+                if (isNaN(num) || num <= 0) {
+                    return 'Rows must be a positive number';
+                }
+                return null;
+            }
+        });
+        if (!rows) return;
+
+        // Ask for cols parameter
+        const cols = await vscode.window.showInputBox({
+            prompt: 'Number of columns in the sprite sheet',
+            placeHolder: '6',
+            validateInput: (value) => {
+                const num = parseInt(value);
+                if (isNaN(num) || num <= 0) {
+                    return 'Columns must be a positive number';
+                }
+                return null;
+            }
+        });
+        if (!cols) return;
+
+        // Ask for array name
+        const name = await vscode.window.showInputBox({
+            prompt: 'Name prefix for the generated array variables',
+            placeHolder: 'sprite',
+            validateInput: (value) => {
+                if (!value || value.trim().length === 0) {
+                    return 'Name cannot be empty';
+                }
+                if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
+                    return 'Name must be a valid identifier (letters, numbers, underscore)';
+                }
+                return null;
+            }
+        });
+        if (!name) return;
+
+        // Ask if attributes should be skipped
+        const skipAttributes = await vscode.window.showQuickPick(
+            ['Include attributes', 'Skip attributes (--no-attributes)'],
+            {
+                placeHolder: 'Do you want to include color attributes?'
+            }
+        );
+        if (!skipAttributes) return;
+
+        // Ask where to save the output file
+        const outputUri = await vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(path.join(path.dirname(inputFile), `${name}.bas`)),
+            filters: {
+                'Boriel Basic Files': ['bas'],
+                'All Files': ['*']
+            }
+        });
+        if (!outputUri) return;
+
+        const outputFile = outputUri.fsPath;
+
+        // Build the command
+        const args = [
+            '-i', `"${inputFile}"`,
+            '-w', width,
+            '-r', rows,
+            '-c', cols,
+            '-o', `"${outputFile}"`,
+            '-n', name
+        ];
+
+        if (skipAttributes.includes('--no-attributes')) {
+            args.push('--no-attributes');
+        }
+
+        const command = `"${pythonPath}" -m zxp2boriel ${args.join(' ')}`;
+        console.log(`Executing command: ${command}`);
+
+        // Show progress
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: "Exporting ZXP to Boriel Basic...",
+                cancellable: false
+            },
+            async (progress) => {
+                return new Promise((resolve, reject) => {
+                    child_process.exec(command, (error, stdout, stderr) => {
+                        if (error) {
+                            vscode.window.showErrorMessage(`Error exporting ZXP: ${stderr || error.message}`);
+                            console.error(`Error: ${stderr}`);
+                            reject(error);
+                            return;
+                        }
+
+                        vscode.window.showInformationMessage(`ZXP exported successfully to ${path.basename(outputFile)}`);
+                        console.log(`Output: ${stdout}`);
+
+                        // Open the generated file
+                        vscode.workspace.openTextDocument(outputFile).then(doc => {
+                            vscode.window.showTextDocument(doc);
+                        });
+
+                        resolve();
+                    });
+                });
+            }
+        );
+
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error: ${error.message}`);
+        console.error('Export error:', error);
+    }
+}
+
 function updateLSP(context) {
     vscode.window.withProgress(
         {
@@ -276,7 +519,12 @@ function activate(context) {
         updateLSP(context);
     });
 
-    context.subscriptions.push(compileCommand, updateLSPCommand);
+    // Registrar el comando "borielBasic.exportZXPToBoriel"
+    const exportZXPCommand = vscode.commands.registerCommand('borielBasic.exportZXPToBoriel', (uri) => {
+        exportZXPToBoriel(uri, context);
+    });
+
+    context.subscriptions.push(compileCommand, updateLSPCommand, exportZXPCommand);
 }
 
 function deactivate() {
