@@ -263,7 +263,14 @@ function compileBorielBasic(options = {}) {
             }
 
             // Ensamblar ASM con zxbasm para generar binario y listado
-            const zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm'); // Ajusta para tu SO si es necesario
+            let zxbasmPath;
+            if (process.platform === 'win32') {
+                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbasm.exe');
+            } else if (process.platform === 'linux') {
+                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
+            } else if (process.platform === 'darwin') {
+                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbasm');
+            }
             const binFile = path.join(distFolder, baseName + '.bin');
             const lstFile = path.join(distFolder, baseName + '.lst');
             const zxbasmCmd = `${zxbasmPath} ${asmFilePath} -o ${binFile}`;

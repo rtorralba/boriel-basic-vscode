@@ -449,9 +449,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 return;
             }
 
-            this.sendEvent(new OutputEvent(`[Debug] Conexión exitosa, continuando con carga de símbolos...\n`));
+            this.sendEvent(new OutputEvent(`[Debug] Conexión exitosa, continuando con inicialización...\n`));
 
-            // Cargar el archivo .asm si existe
+            // Habilitar breakpoints PRIMERO (requerido por ZEsarUX antes de cargar código fuente)
+            try { 
+                await this._ensureBreakpointsEnabled(); 
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints habilitados\n`));
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] No se pudieron habilitar breakpoints: ${e.message}\n`));
+            }
+
+            // Cargar el archivo .asm si existe (después de habilitar breakpoints)
             this.sendEvent(new OutputEvent(`[Debug] Intentando cargar símbolos...\n`));
             this.sendEvent(new OutputEvent(`[Debug] asmFile = ${asmFile}\n`));
             this.sendEvent(new OutputEvent(`[Debug] existe? = ${asmFile ? fs.existsSync(asmFile) : 'N/A'}\n`));
@@ -459,7 +467,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             if (asmFile && fs.existsSync(asmFile)) {
                 this.sendEvent(new OutputEvent(`\n=== Cargando símbolos desde: ${asmFile} ===\n`));
                 try {
-                    await this._sendCommand(`load-source-code ${asmFile}`);
+                    // Convertir rutas de Windows a forward slashes para ZEsarUX
+                    const asmFileNormalized = asmFile.replace(/\\/g, '/');
+                    await this._sendCommand(`load-source-code ${asmFileNormalized}`);
                     this.sendEvent(new OutputEvent(`✓ Símbolos cargados correctamente\n\n`));
                 } catch (err) {
                     this.sendEvent(new OutputEvent(`⚠ No se pudieron cargar los símbolos: ${err.message}\n\n`));
@@ -468,14 +478,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`⚠ No se encontró archivo .asm para depuración simbólica\n\n`));
             }
 
-            // Habilitar breakpoints e instalar pendientes INMEDIATAMENTE
+            // Instalar breakpoints pendientes INMEDIATAMENTE
             // (antes de que el TAP empiece a ejecutarse automáticamente)
-            try { 
-                await this._ensureBreakpointsEnabled(); 
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoints habilitados\n`));
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] No se pudieron habilitar breakpoints: ${e.message}\n`));
-            }
             try { 
                 await this._flushPendingBreakpoints(); 
                 this.sendEvent(new OutputEvent(`[Debug] Breakpoints pendientes instalados\n`));
@@ -647,8 +651,19 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     this._asmSymbolAddressMap = {}; // other symbols (labels) -> address
         if (!asmFile || !fs.existsSync(asmFile)) return;
         try {
-            const zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
-            const zxbasmCmd = `${zxbasmPath} -d "${asmFile}" -o /dev/null 2>&1`;
+            let zxbasmPath;
+            let nullDevice;
+            if (process.platform === 'win32') {
+                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbasm.exe');
+                nullDevice = 'nul';
+            } else if (process.platform === 'linux') {
+                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
+                nullDevice = '/dev/null';
+            } else if (process.platform === 'darwin') {
+                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbasm');
+                nullDevice = '/dev/null';
+            }
+            const zxbasmCmd = `${zxbasmPath} -d "${asmFile}" -o ${nullDevice} 2>&1`;
             this.sendEvent(new OutputEvent(`[Debug] Ejecutando zxbasm para mapear ASM (launch): ${zxbasmCmd}\n`));
             const execSync = require('child_process').execSync;
             // CRITICAL: Capture both stdout AND stderr because "Declaring" lines go to stderr
@@ -1253,9 +1268,20 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Wait a bit for step mode to be established
             await this._waitForZesarux(300);
             
+            // Re-enable breakpoints after enter-cpu-step (it disables them)
+            this.sendEvent(new OutputEvent(`[Debug] Re-habilitando breakpoints después de enter-cpu-step...\n`));
+            this._breakpointsEnabled = false; // Force re-enable
+            try {
+                await this._ensureBreakpointsEnabled();
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] Advertencia al re-habilitar breakpoints: ${e.message}\n`));
+            }
+            
             // Now execute smartload - it will stay in step mode
+            // Convertir rutas de Windows a forward slashes para ZEsarUX
+            const tapPathNormalized = tapPath.replace(/\\/g, '/');
             this.sendEvent(new OutputEvent(`[Debug] Ejecutando smartload (permanecerá en step mode)...\n`));
-            const smartloadResp = await this._sendCommandAndWait(`smartload ${tapPath}`);
+            const smartloadResp = await this._sendCommandAndWait(`smartload ${tapPathNormalized}`);
             const smartloadRespStr = String(smartloadResp).replace(/\n/g,' ');
             this.sendEvent(new OutputEvent(`[Debug] smartload response: ${smartloadRespStr}\n`));
             
@@ -1267,6 +1293,24 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             
             // Wait for smartload to complete
             await this._waitForZesarux(500);
+            
+            // Re-establish breakpoint after smartload (it may have been cleared)
+            if (targetAddr && targetAddr !== 0) {
+                const hexNoPrefix = targetAddr.toString(16).toUpperCase();
+                this.sendEvent(new OutputEvent(`[Debug] Estableciendo breakpoint en ${hexNoPrefix}H después de smartload...\n`));
+                try {
+                    const cmd = `set-breakpoint 2 PC=${hexNoPrefix}H`;
+                    const resp = await this._sendCommandAndWait(cmd);
+                    const lower = String(resp || '').toLowerCase();
+                    if (lower.includes('unknown command') || lower.includes('error')) {
+                        // fallback to legacy
+                        await this._sendCommand(`break set ${hexNoPrefix}H`);
+                    }
+                    this.sendEvent(new OutputEvent(`[Debug] Breakpoint re-establecido en ${hexNoPrefix}H\n`));
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] Advertencia al establecer breakpoint: ${e.message}\n`));
+                }
+            }
             
             // Now run - this will execute until it hits our breakpoint
             this.sendEvent(new OutputEvent(`[Debug] Ejecutando run (se detendrá en breakpoint)...\n`));
@@ -2064,8 +2108,19 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         let asmLineToAddress = {};
         if (asmFile && fs.existsSync(asmFile)) {
             try {
-                const zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
-                const zxbasmCmd = `${zxbasmPath} -d "${asmFile}" -o /dev/null`;
+                let zxbasmPath;
+                let nullDevice;
+                if (process.platform === 'win32') {
+                    zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbasm.exe');
+                    nullDevice = 'nul';
+                } else if (process.platform === 'linux') {
+                    zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
+                    nullDevice = '/dev/null';
+                } else if (process.platform === 'darwin') {
+                    zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbasm');
+                    nullDevice = '/dev/null';
+                }
+                const zxbasmCmd = `${zxbasmPath} -d "${asmFile}" -o ${nullDevice}`;
                 this.sendEvent(new OutputEvent(`[Debug] Ejecutando zxbasm para mapear ASM: ${zxbasmCmd}\n`));
                 const execSync = require('child_process').execSync;
                 const out = execSync(zxbasmCmd, { cwd: path.dirname(asmFile), encoding: 'utf8' });
