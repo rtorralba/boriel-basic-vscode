@@ -3,9 +3,9 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.16",
+    "version": "1.0.24",
     "author": "Raül Torralba (Juntelart)",
-    "license": "MIT",
+    "license": "AGPL-3.0",
     "publisher": "rtorralba",
     "repository": {
         "type": "git",
@@ -120,8 +120,22 @@
                 "command": "borielBasic.updateLSP",
                 "title": "Actualizar Boriel Basic LSP",
                 "category": "Boriel Basic"
+            },
+            {
+                "command": "borielBasic.exportZXPToBoriel",
+                "title": "Export to Boriel Basic",
+                "category": "Boriel Basic"
             }
         ],
+        "menus": {
+            "explorer/context": [
+                {
+                    "when": "resourceExtname == .zxp",
+                    "command": "borielBasic.exportZXPToBoriel",
+                    "group": "navigation"
+                }
+            ]
+        },
         "breakpoints": [
             {
                 "language": "borielbasic"
@@ -189,7 +203,7 @@
     "dependencies": {
         "@vscode/debugadapter": "^1.68.0",
         "@vscode/debugprotocol": "^1.68.0",
-        "boriel-basic-lsp": "^1.0.78",
+        "boriel-basic-lsp": "^1.0.84",
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0"
     }

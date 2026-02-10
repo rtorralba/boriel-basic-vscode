@@ -1,12 +1,9 @@
-#!/usr/bin/env python
-# vim: ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -33,19 +30,16 @@ class SymbolID(SymbolIdABC):
     """
 
     __slots__ = (
-        "name",
-        "filename",
-        "lineno",
-        "mangled",
-        "declared",
         "_accessed",
-        "caseins",
-        "scope",
-        "scope_ref",
-        "addr",
-        "has_address",
-        "_type",
         "_ref",
+        "_type",
+        "addr",
+        "caseins",
+        "declared",
+        "filename",
+        "has_address",
+        "original_name",
+        "scope_ref",
     )
 
     def __init__(
@@ -59,7 +53,8 @@ class SymbolID(SymbolIdABC):
         super().__init__(name=name, lineno=lineno, filename=filename, type_=type_, class_=class_)
         assert class_ in (CLASS.const, CLASS.label, CLASS.var, CLASS.unknown)
 
-        self.name = name
+        self.name = name  # This value will be modified later removing the trailing sigil ($) if used.
+        self.original_name = name  # This value will always contain the original name, preserving the sigil if used
         self.filename = global_.FILENAME if filename is None else filename  # In which file was first used
         self.lineno = lineno  # In which line was first used
         self.mangled = f"{global_.MANGLE_CHR}{name}"  # This value will be overridden later

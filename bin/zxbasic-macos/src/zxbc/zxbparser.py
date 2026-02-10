@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-# vim: ts=4:et:sw=4:
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import math
 import sys
@@ -199,21 +198,21 @@ def make_number(value, lineno: int, type_=None):
     return sym.NUMBER(value, type_=type_, lineno=lineno)
 
 
-def make_typecast(type_: sym.TYPE, node: sym.SYMBOL | None, lineno: int):
+def make_typecast(type_: sym.TYPE, node: sym.SYMBOL | None, lineno: int) -> sym.TYPECAST | None:
     """Wrapper: returns a Typecast node"""
     if node is None or node.type_ is None:
-        return  # syntax / semantic error
+        return None  # syntax / semantic error
 
     assert isinstance(type_, sym.TYPE)
     return sym.TYPECAST.make_node(type_, node, lineno)
 
 
-def make_binary(lineno, operator, left, right, func=None, type_=None):
+def make_binary(lineno: int, operator, left, right, func=None, type_=None):
     """Wrapper: returns a Binary node"""
     return sym.BINARY.make_node(operator, left, right, lineno, func, type_)
 
 
-def make_unary(lineno, operator, operand, func=None, type_=None):
+def make_unary(lineno: int, operator, operand, func=None, type_=None):
     """Wrapper: returns a Unary node"""
     if operand is None:  # syntax / semantic error
         return None
@@ -221,17 +220,17 @@ def make_unary(lineno, operator, operand, func=None, type_=None):
     return sym.UNARY.make_node(lineno, operator, operand, func, type_)
 
 
-def make_builtin(lineno, fname, operands, func=None, type_=None):
+def make_builtin(lineno: int, fname: str, operands: Symbol | tuple | list | None, func=None, type_=None):
     """Wrapper: returns a Builtin function node.
     Can be a Symbol, tuple or list of Symbols
     If operand is an iterable, they will be expanded.
     """
     if operands is None:
         operands = []
-    assert isinstance(operands, Symbol) or isinstance(operands, tuple) or isinstance(operands, list)
+    assert isinstance(operands, Symbol | tuple | list)
     # TODO: In the future, builtin functions will be implemented in an external stdlib, like POINT or ATTR
     __DEBUG__(f'Creating BUILTIN "{fname}"', 1)
-    if not isinstance(operands, (list, tuple, set)):
+    if not isinstance(operands, (list, tuple)):
         operands = [operands]
 
     return sym.BUILTIN.make_node(lineno, fname, func, type_, *operands)
@@ -287,7 +286,7 @@ def make_arg_list(node, *args):
 def make_argument(expr, lineno: int, byref=None, name: str = None):
     """Wrapper: Creates a node containing an ARGUMENT"""
     if expr is None:
-        return  # There were a syntax / semantic error
+        return None  # There were a syntax / semantic error
 
     if byref is None:
         byref = OPTIONS.default_byref
@@ -706,7 +705,7 @@ def p_var_decl_ini(p):
         typedef = sym.TYPEREF(expr.type_, p.lexer.lineno, implicit=True)
 
     value = make_typecast(typedef, expr, p.lineno(4))
-    defval = value if is_static(expr) else None
+    defval = value if is_static(expr) and value.type_ != TYPE.string else None
 
     if keyword == "DIM":
         SYMBOL_TABLE.declare_variable(idlist[0].name, idlist[0].lineno, typedef, default_value=defval)
@@ -716,8 +715,7 @@ def p_var_decl_ini(p):
             if not is_static_str(value):
                 errmsg.syntax_error_not_constant(p.lineno(4))
                 return
-            else:
-                defval = value
+            defval = value
 
         SYMBOL_TABLE.declare_const(idlist[0].name, idlist[0].lineno, typedef, default_value=defval)
 
@@ -776,8 +774,7 @@ def p_arr_decl_attr(p):
                 if expr.operand.token not in ("ID", "VAR", "LABEL"):
                     error(p.lineno(3), "Only addresses of identifiers are allowed")
                     return
-                else:
-                    expr.operand.has_address = True
+                expr.operand.has_address = True
 
     elif not is_static(expr):
         errmsg.syntax_error_address_must_be_constant(p.lineno(3))
@@ -1076,7 +1073,7 @@ def p_statement_call(p):
         p[0] = None
     elif len(p) == 2:
         entry = SYMBOL_TABLE.get_entry(p[1])
-        if not entry or entry.class_ in (CLASS.label, CLASS.unknown):
+        if entry is not None and entry.class_ in (CLASS.label, CLASS.unknown):
             p[0] = make_label(p[1], p.lineno(1))
         else:
             p[0] = make_sub_call(p[1], p.lineno(1), make_arg_list(None))
@@ -1741,6 +1738,11 @@ def p_data(p):
         p[0] = None
         return
 
+    if gl.FUNCTION_LEVEL:
+        errmsg.error(p.lineno(1), "DATA not allowed within Functions nor Subs")
+        p[0] = None
+        return
+
     for d in p[2].children:
         value = d.value
         if is_static(value):
@@ -1980,9 +1982,15 @@ def p_print_sentence(p):
     PRINT_IS_USED = True
 
 
+def p_print_elem_expr(p):
+    """print_elem : expr"""
+    p[0] = p[1]
+    if p[1] is not None and p[1].type_ == TYPE.boolean:
+        p[0] = make_typecast(TYPE.ubyte, p[1], p.lineno(1))
+
+
 def p_print_list_expr(p):
-    """print_elem : expr
-    | print_at
+    """print_elem : print_at
     | print_tab
     | attr
     | BOLD expr
@@ -2234,11 +2242,10 @@ def p_save_code(p):
         if p[3].upper() not in ("SCREEN", "SCREEN$"):
             error(p.lineno(3), 'Unexpected "%s" ID. Expected "SCREEN$" instead' % p[3])
             return None
-        else:
-            # ZX Spectrum screen start + length
-            # This should be stored in a architecture-dependant file
-            start = make_number(16384, lineno=p.lineno(1))
-            length = make_number(6912, lineno=p.lineno(1))
+        # ZX Spectrum screen start + length
+        # This should be stored in a architecture-dependant file
+        start = make_number(16384, lineno=p.lineno(1))
+        length = make_number(6912, lineno=p.lineno(1))
     else:
         start = make_typecast(TYPE.uinteger, p[4], p.lineno(4))
         length = make_typecast(TYPE.uinteger, p[6], p.lineno(6))
@@ -2298,13 +2305,12 @@ def p_load_code(p):
         if p[3].upper() not in ("SCREEN", "SCREEN$", "CODE"):
             error(p.lineno(3), 'Unexpected "%s" ID. Expected "SCREEN$" instead' % p[3])
             return None
-        else:
-            if p[3].upper() == "CODE":  # LOAD "..." CODE
-                start = make_number(0, lineno=p.lineno(3))
-                length = make_number(0, lineno=p.lineno(3))
-            else:  # SCREEN$
-                start = make_number(16384, lineno=p.lineno(3))
-                length = make_number(6912, lineno=p.lineno(3))
+        if p[3].upper() == "CODE":  # LOAD "..." CODE
+            start = make_number(0, lineno=p.lineno(3))
+            length = make_number(0, lineno=p.lineno(3))
+        else:  # SCREEN$
+            start = make_number(16384, lineno=p.lineno(3))
+            length = make_number(6912, lineno=p.lineno(3))
     else:
         start = make_typecast(TYPE.uinteger, p[4], p.lineno(3))
 
@@ -2583,7 +2589,7 @@ def p_string_expr_lp(p):
     if p[2].type_ != TYPE.string:
         error(
             p.lexer.lineno,
-            "Expected a string type expression. " "Got %s type instead" % TYPE.to_string(p[2].type_),
+            "Expected a string type expression. Got %s type instead" % TYPE.to_string(p[2].type_),
         )
         p[0] = None
     else:
@@ -3477,7 +3483,7 @@ def p_code(p):
 
 def p_sgn(p):
     """bexpr : SGN bexpr %prec UMINUS"""
-    sgn = lambda x: x < 0 and -1 or x > 0 and 1 or 0  # noqa
+    sgn = lambda x: x < 0 and -1 or x > 0 and 1 or 0
 
     if p[2].type_ == TYPE.string:
         error(p.lineno(1), "Expected a numeric expression, got TYPE.string instead")

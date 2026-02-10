@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from src.api.config import OPTIONS
 from src.api.options import Action
 from src.arch.z80.backend import Backend as Z80Backend
@@ -75,9 +82,7 @@ class Backend(Z80Backend):
         output.append("di")
         output.append("push iy")
         output.append("ld iy, 0x5C3A  ; ZX Spectrum ROM variables address")
-        output.append("ld hl, 0")
-        output.append("add hl, sp")
-        output.append(f"ld ({common.CALL_BACK}), hl")
+        output.append(f"ld ({common.CALL_BACK}), sp")
         output.append("ei")
 
         output.extend(f"call {x}" for x in sorted(common.INITS))

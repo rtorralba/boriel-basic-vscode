@@ -1,5 +1,13 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import src.api
 from src.api import global_ as gl
+from src.api.config import OPTIONS
 from src.arch.z80 import Translator
 from src.arch.z80.visitor.translator_visitor import TranslatorVisitor
 from src.symbols import sym as symbols
@@ -43,16 +51,15 @@ class VarTranslator(TranslatorVisitor):
             if self.O_LEVEL > 1:
                 return
 
-        bound_ptrs = []  # Bound tables pointers (empty if not used)
         lbound_label = entry.mangled + ".__LBOUND__"
         ubound_label = entry.mangled + ".__UBOUND__"
+        bound_ptrs = ["0", "0"]  # NULL by default
 
-        if entry.lbound_used or entry.ubound_used:
-            bound_ptrs = ["0", "0"]  # NULL by default
-            if entry.lbound_used:
-                bound_ptrs[0] = lbound_label
-            if entry.ubound_used:
-                bound_ptrs[1] = ubound_label
+        if not entry.is_zero_based and entry.is_dynamically_accessed:
+            bound_ptrs[0] = lbound_label
+
+        if entry.ubound_used or OPTIONS.array_check:
+            bound_ptrs[1] = ubound_label
 
         data_label = entry.data_label
         idx_table_label = src.api.tmp_labels.tmp_label()
@@ -87,10 +94,10 @@ class VarTranslator(TranslatorVisitor):
 
         self.ic_vard(idx_table_label, l)
 
-        if entry.lbound_used:
+        if bound_ptrs[0] != "0":
             l = ["%04X" % bound.lower for bound in node.bounds]
             self.ic_vard(lbound_label, l)
 
-        if entry.ubound_used:
+        if bound_ptrs[1] != "0":
             l = ["%04X" % bound.upper for bound in node.bounds]
             self.ic_vard(ubound_label, l)

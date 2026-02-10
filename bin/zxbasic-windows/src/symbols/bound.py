@@ -1,12 +1,9 @@
-#!/usr/bin/python
-# vim: ts=4:et:sw=4:
-
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 from src.api import check
 from src.api.errmsg import error
@@ -50,12 +47,12 @@ class SymbolBOUND(Symbol):
         lower_value = eval_to_num(lower.t)
         if lower_value is None:  # semantic error
             error(lineno, "Unknown lower bound for array dimension")
-            return
+            return None
 
         upper_value = eval_to_num(upper.t)
         if upper_value is None:  # semantic error
             error(lineno, "Unknown upper bound for array dimension")
-            return
+            return None
 
         if lower_value < 0:
             error(lineno, "Array bounds must be greater than 0")

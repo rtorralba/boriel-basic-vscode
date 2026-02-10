@@ -1,7 +1,11 @@
-#!/usr/bin/env python3
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import os
-import sys
 from collections.abc import Iterable
 from typing import NamedTuple
 
@@ -161,7 +165,3 @@ def main(list_of_directories: list[str] | None = None, force: bool = False):
 
     for directory in list_of_directories or [OPTS_PATH]:
         read_opts(directory, PATTERNS)
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])

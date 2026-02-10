@@ -39,3 +39,6 @@ coverage/
 .env.*.local
 
 *.vsix
+
+# Python virtual environment
+venv/

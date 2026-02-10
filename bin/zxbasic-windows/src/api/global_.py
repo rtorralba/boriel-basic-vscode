@@ -1,12 +1,10 @@
-#!/usr/bin/env python
-# vim:ts=4:et:sw=4:
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, NamedTuple
@@ -15,6 +13,7 @@ from src.api.constants import TYPE, LoopType
 from src.api.opcodestemps import OpcodesTemps
 
 if TYPE_CHECKING:
+    from src.symbols.call import SymbolCALL
     from src.symbols.id_ import SymbolID
 
 
@@ -91,7 +90,7 @@ SYMBOL_TABLE = None  # Must be initialized with SymbolTable instance
 # Function calls pending to check
 # Each scope pushes (prepends) an empty list
 # ----------------------------------------------------------------------
-FUNCTION_CALLS: list[SymbolID] = []
+FUNCTION_CALLS: list[SymbolCALL] = []
 
 # ----------------------------------------------------------------------
 # Function level entry ID in which scope we are in. If the list

@@ -1,16 +1,10 @@
-#!/usr/bin/python
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-# --------------------------------------------------------------
-# Copyleft (k) 2008, by Jose M. Rodriguez-Rosa
-# (a.k.a. Boriel, http://www.boriel.com)
-#
-# This module contains float (FP) boolean, arithmetic and
-# comparison intermediate-code translations
-# --------------------------------------------------------------
-
-# -----------------------------------------------------
-# Floating Point operators
-# -----------------------------------------------------
 from src.api import fp
 from src.arch.interface.quad import Quad
 from src.arch.z80.backend.common import _f_ops, is_float, is_int, runtime_call
@@ -106,7 +100,7 @@ class Float:
                 op = op[1:]
                 output.append("exx")  # uses alternate set to put it on the stack
                 output.append("ex af, af'")
-                if is_int(op):  # noqa TODO: it will fail
+                if is_int(op):  # TODO: it will fail
                     op = int(op)
                     output.append(f"ld hl, {op}")
                 elif op[0] == "_":
@@ -395,8 +389,7 @@ class Float:
         if is_float(value):
             if float(value) == 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("ld a, c")
@@ -414,8 +407,7 @@ class Float:
         if is_float(value):
             if float(value) != 0:
                 return ["jp %s" % str(ins[2])]  # Always true
-            else:
-                return []
+            return []
 
         output = cls.get_oper(value)
         output.append("ld a, c")

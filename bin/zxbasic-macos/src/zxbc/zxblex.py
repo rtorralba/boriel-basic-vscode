@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-# vim:ts=4:et:sw=4
 
-# ----------------------------------------------------------------------
-# Copyleft (K), Jose M. Rodriguez-Rosa (a.k.a. Boriel)
-#
-# This program is Free Software and is released under the terms of
-#                    the GNU General License
-# ----------------------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import re
 import sys
@@ -617,6 +616,8 @@ def t_ID(t):
         entry = api.global_.SYMBOL_TABLE.get_entry(t.value) if api.global_.SYMBOL_TABLE is not None else None
         if entry:
             t.type = callables.get(entry.class_, t.type)
+        elif is_label(t):
+            t.type = "LABEL"
 
     if t.type == "BIN":
         t.lexer.begin("bin")
@@ -683,7 +684,7 @@ def find_column(token):
     return column
 
 
-def is_label(token):
+def is_label(token) -> bool:
     """Return whether the token is a label (an integer number or id
     at the beginning of a line.
 
@@ -706,11 +707,23 @@ def is_label(token):
         i -= 1
 
     column = c - i
+    if column != 0:
+        return False
 
-    if column == 0:
-        column += 1
+    if token.type == "NUMBER":
+        return True
 
-    return column == 1
+    i = token.lexpos + len(token.value)
+    while i < len(input):
+        if input[i] == ":":
+            return True
+
+        if input[i] not in {" ", "\t"}:
+            break
+
+        i += 1
+
+    return False
 
 
 lexer = lex.lex()

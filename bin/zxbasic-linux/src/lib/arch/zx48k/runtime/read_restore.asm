@@ -25,7 +25,7 @@
 #include once <iloadf.asm>
 #include once <ftof16reg.asm>
 #include once <f16tofreg.asm>
-#include once <free.asm>
+#include once <mem/free.asm>
 
 #define _str 1
 #define _i8  2
@@ -212,6 +212,13 @@ _from_u16:
 
 dynamic_cast4:
     ;; The user type is "shorter" than the read one
+    ld a, b ;; read type
+    cp _i16 ;; if user type < read type < _i16 => From Ubyte to Byte. Return af'
+    jr nc, 1f
+    ex af, af'
+    ret
+1:
+    ld a, c ;; recover user required type
     cp _f16 ;; required type
     jr c, before_to_int  ;; required < fixed (f16)
     ex af, af'

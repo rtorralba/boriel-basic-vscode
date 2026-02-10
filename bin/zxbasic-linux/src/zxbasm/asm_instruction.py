@@ -1,5 +1,9 @@
-#!/usr/bin/env python
-# vim: ts=4:et:sw=4
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import re
 
@@ -62,7 +66,7 @@ class InternalMismatchSizeError(Error):
         a = "" if current_size == 1 else "s"
         b = "" if asm.size == 1 else "s"
 
-        self.msg = "Invalid instruction [%s] size (%i byte%s). " "It should be %i byte%s." % (
+        self.msg = "Invalid instruction [%s] size (%i byte%s). It should be %i byte%s." % (
             asm.asm,
             current_size,
             a,

@@ -1,13 +1,10 @@
-#!/usr/bin/python
-# vim: et:ts=4:sw=4
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
-# --------------------------------------------------------------
-# Copyleft (k) 2008, by Jose M. Rodriguez-Rosa
-# (a.k.a. Boriel, http://www.boriel.com)
-#
-# This module contains parameter load
-# intermediate-code translations
-# --------------------------------------------------------------
 from . import common
 from ._8bit import Bits8
 from ._16bit import Bits16
@@ -310,11 +307,10 @@ def _pstore16(ins: Quad) -> list[str]:
             output.append("inc hl")
             output.append("ld (hl), %i" % (v >> 8))
             return output
-        else:
-            output.append("ld (hl), e")
-            output.append("inc hl")
-            output.append("ld (hl), d")
-            return output
+        output.append("ld (hl), e")
+        output.append("inc hl")
+        output.append("ld (hl), d")
+        return output
 
     if is_int(value):
         v = Bits16.int16(value)

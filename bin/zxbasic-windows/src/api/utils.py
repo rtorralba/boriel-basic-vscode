@@ -1,4 +1,9 @@
-#!/usr/bin/env python
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import errno
 import os
@@ -12,17 +17,18 @@ from typing import IO, Any, TypeVar
 from src.api import constants, errmsg, global_
 
 __all__ = (
+    "chdir",
+    "first",
     "flatten_list",
     "open_file",
     "read_txt_file",
     "sanitize_filename",
     "timeout",
-    "first",
-    "chdir",
 )
 
 __doc__ = """Utils module contains many helpers for several task,
 like reading files or path management"""
+
 
 SHELVE_PATH = os.path.join(constants.ZXBASIC_ROOT, "parsetab", "tabs.dbm")
 SHELVE = shelve.open(SHELVE_PATH)

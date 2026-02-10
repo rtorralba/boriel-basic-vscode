@@ -344,6 +344,225 @@ function generateLineMap(asmFilePath) {
     return lineMap;
 }
 
+
+async function ensureZXP2BorielInstalled(context) {
+    const venvPath = path.join(context.extensionPath, 'venv');
+    const pythonPath = process.platform === 'win32'
+        ? path.join(venvPath, 'Scripts', 'python.exe')
+        : path.join(venvPath, 'bin', 'python3');
+    const pipPath = process.platform === 'win32'
+        ? path.join(venvPath, 'Scripts', 'pip.exe')
+        : path.join(venvPath, 'bin', 'pip');
+
+    return new Promise(async (resolve, reject) => {
+        // Check if venv exists
+        if (!fs.existsSync(venvPath)) {
+            const createVenv = await vscode.window.showWarningMessage(
+                'No se ha encontrado un entorno virtual para zxp2boriel. ¿Deseas crearlo ahora?',
+                'Sí, crear',
+                'No'
+            );
+
+            if (createVenv !== 'Sí, crear') {
+                vscode.window.showInformationMessage('Operación cancelada.');
+                reject(false);
+                return;
+            }
+
+            // Create venv
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: "Creando entorno virtual...",
+                    cancellable: false
+                },
+                async (progress) => {
+                    return new Promise((venvResolve, venvReject) => {
+                        child_process.exec(`python3 -m venv "${venvPath}"`, (error, stdout, stderr) => {
+                            if (error) {
+                                vscode.window.showErrorMessage(`Error al crear entorno virtual: ${stderr || error.message}`);
+                                console.error('Venv creation error:', stderr);
+                                venvReject(false);
+                                reject(false);
+                                return;
+                            }
+                            console.log('Venv created successfully');
+                            venvResolve(true);
+                        });
+                    });
+                }
+            );
+        }
+
+        // Check if zxp2boriel is installed in the venv
+        child_process.exec(`"${pythonPath}" -m zxp2boriel --help`, (error, stdout, stderr) => {
+            if (!error) {
+                // Already installed
+                resolve(pythonPath);
+                return;
+            }
+
+            // Not installed, ask user if they want to install it
+            vscode.window.showWarningMessage(
+                'La librería zxp2boriel no está instalada en el entorno virtual. ¿Deseas instalarla ahora?',
+                'Sí, instalar',
+                'No'
+            ).then(async (choice) => {
+                if (choice === 'Sí, instalar') {
+                    // Install zxp2boriel in venv
+                    await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: "Instalando zxp2boriel...",
+                            cancellable: false
+                        },
+                        async (progress) => {
+                            return new Promise((installResolve, installReject) => {
+                                child_process.exec(`"${pipPath}" install zxp2boriel`, (installError, installStdout, installStderr) => {
+                                    if (installError) {
+                                        vscode.window.showErrorMessage(`Error al instalar zxp2boriel: ${installStderr || installError.message}`);
+                                        console.error('Installation error:', installStderr);
+                                        installReject(false);
+                                        reject(false);
+                                        return;
+                                    }
+
+                                    vscode.window.showInformationMessage('zxp2boriel instalado correctamente.');
+                                    console.log('Installation output:', installStdout);
+                                    installResolve(true);
+                                    resolve(pythonPath);
+                                });
+                            });
+                        }
+                    );
+                } else {
+                    vscode.window.showInformationMessage('Instalación cancelada. No se puede exportar sin zxp2boriel.');
+                    reject(false);
+                }
+            });
+        });
+    });
+}
+
+function getExportFormHTML(context) {
+    const htmlPath = path.join(context.extensionPath, 'resources', 'export_form.html');
+    return fs.readFileSync(htmlPath, 'utf-8');
+}
+
+async function exportZXPToBoriel(uri, context) {
+    try {
+        // Check if zxp2boriel is installed, and install if needed
+        const pythonPath = await ensureZXP2BorielInstalled(context);
+        if (!pythonPath) {
+            return; // User cancelled or installation failed
+        }
+
+        const inputFile = uri.fsPath;
+        const inputFileName = path.basename(inputFile, '.zxp');
+
+        // Create a webview panel
+        const panel = vscode.window.createWebviewPanel(
+            'zxpExport',
+            'Export ZXP to Boriel Basic',
+            vscode.ViewColumn.One,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true
+            }
+        );
+
+        // Set the webview's HTML content
+        panel.webview.html = getExportFormHTML(context);
+
+        // Handle messages from the webview
+        panel.webview.onDidReceiveMessage(
+            async message => {
+                switch (message.command) {
+                    case 'cancel':
+                        panel.dispose();
+                        return;
+
+                    case 'export':
+                        const { width, rows, cols, name, skipAttributes } = message;
+
+                        // Ask where to save the output file
+                        const outputUri = await vscode.window.showSaveDialog({
+                            defaultUri: vscode.Uri.file(path.join(path.dirname(inputFile), `${name}.bas`)),
+                            filters: {
+                                'Boriel Basic Files': ['bas'],
+                                'All Files': ['*']
+                            }
+                        });
+
+                        if (!outputUri) {
+                            return; // User cancelled save dialog
+                        }
+
+                        const outputFile = outputUri.fsPath;
+
+                        // Close the panel
+                        panel.dispose();
+
+                        // Build the command
+                        const args = [
+                            '-i', `"${inputFile}"`,
+                            '-w', width,
+                            '-r', rows,
+                            '-c', cols,
+                            '-o', `"${outputFile}"`,
+                            '-n', name
+                        ];
+
+                        if (skipAttributes) {
+                            args.push('--no-attributes');
+                        }
+
+                        const command = `"${pythonPath}" -m zxp2boriel ${args.join(' ')}`;
+                        console.log(`Executing command: ${command}`);
+
+                        // Show progress
+                        await vscode.window.withProgress(
+                            {
+                                location: vscode.ProgressLocation.Notification,
+                                title: "Exporting ZXP to Boriel Basic...",
+                                cancellable: false
+                            },
+                            async (progress) => {
+                                return new Promise((resolve, reject) => {
+                                    child_process.exec(command, (error, stdout, stderr) => {
+                                        if (error) {
+                                            vscode.window.showErrorMessage(`Error exporting ZXP: ${stderr || error.message}`);
+                                            console.error(`Error: ${stderr}`);
+                                            reject(error);
+                                            return;
+                                        }
+
+                                        vscode.window.showInformationMessage(`ZXP exported successfully to ${path.basename(outputFile)}`);
+                                        console.log(`Output: ${stdout}`);
+
+                                        // Open the generated file
+                                        vscode.workspace.openTextDocument(outputFile).then(doc => {
+                                            vscode.window.showTextDocument(doc);
+                                        });
+
+                                        resolve();
+                                    });
+                                });
+                            }
+                        );
+                        return;
+                }
+            },
+            undefined,
+            context.subscriptions
+        );
+
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error: ${error.message}`);
+        console.error('Export error:', error);
+    }
+}
+
 function updateLSP(context) {
     vscode.window.withProgress(
         {
@@ -464,6 +683,54 @@ function activate(context) {
         }
     };
 
+    // Registrar hover provider antes de iniciar el LSP
+    const hoverProvider = vscode.languages.registerHoverProvider('borielbasic', {
+        async provideHover(document, position, token) {
+            // Obtener la palabra en la posición actual
+            const wordRange = document.getWordRangeAtPosition(position);
+            const word = wordRange ? document.getText(wordRange) : '';
+
+            // Intentar obtener información del LSP si está disponible
+            if (client && client.state === 2) { // 2 = Running
+                try {
+                    const params = {
+                        textDocument: {
+                            uri: document.uri.toString()
+                        },
+                        position: {
+                            line: position.line,
+                            character: position.character
+                        }
+                    };
+
+                    const result = await client.sendRequest('textDocument/hover', params);
+
+                    if (result && result.contents) {
+                        // Extraer el contenido del LSP
+                        let lspContent;
+                        if (typeof result.contents === 'string') {
+                            lspContent = result.contents;
+                        } else if (Array.isArray(result.contents)) {
+                            lspContent = result.contents.map(c => typeof c === 'string' ? c : c.value).join('\n\n');
+                        } else if (result.contents.value) {
+                            lspContent = result.contents.value;
+                        } else {
+                            lspContent = JSON.stringify(result.contents);
+                        }
+
+                        return new vscode.Hover(new vscode.MarkdownString(lspContent), result.range);
+                    }
+                } catch (error) {
+                    console.error('[Boriel Basic] Error al obtener hover del LSP:', error);
+                }
+            }
+
+            // Si el LSP no devolvió información, retornar null (no mostrar hover)
+            return null;
+        }
+    });
+    context.subscriptions.push(hoverProvider);
+
     // Crear el cliente LSP
     client = new LanguageClient(
         'borielBasicLanguageServer',
@@ -474,6 +741,8 @@ function activate(context) {
 
     // Iniciar el cliente
     client.start();
+
+
 
     // Registrar el comando "borielBasic.compile"
     console.log('[Extension] Registrando comando borielBasic.compile');
@@ -487,6 +756,11 @@ function activate(context) {
     // Registrar el comando "borielBasic.updateLSP"
     const updateLSPCommand = vscode.commands.registerCommand('borielBasic.updateLSP', () => {
         updateLSP(context);
+    });
+
+    // Registrar el comando "borielBasic.exportZXPToBoriel"
+    const exportZXPCommand = vscode.commands.registerCommand('borielBasic.exportZXPToBoriel', (uri) => {
+        exportZXPToBoriel(uri, context);
     });
 
     // Registrar comando para lanzar ZEsarUX
@@ -524,11 +798,11 @@ function activate(context) {
         vscode.debug.registerDebugAdapterDescriptorFactory('borielbasic', debugAdapterFactory),
         compileCommand,
         updateLSPCommand,
+        exportZXPCommand,
         launchZesaruxCommand
     );
     console.log('[Extension] DebugAdapterDescriptorFactory registrado para borielbasic');
     console.log('[Extension] activate FIN');
-// Eliminada la factory Dezog, ahora el arranque es por comando
 }
 
 class InlineDebugAdapterFactory {
@@ -558,164 +832,3 @@ module.exports = {
     activate,
     deactivate
 };
-
-// Factory para el debug adapter
-class BorielBasicDebugAdapterDescriptorFactory {
-    createDebugAdapterDescriptor(session, executable) {
-        // Usar un servidor inline simple
-        return new vscode.DebugAdapterServer(0);
-    }
-}
-
-// Clase simple para manejar la sesión de debug
-class BorielBasicDebugSession {
-    constructor() {
-        this._zesaruxProcess = null;
-        this._debugSocket = null;
-        this._sequenceNumber = 1;
-    }
-
-    async start(config) {
-        // Usar ruta absoluta por defecto si no se especifica
-        const defaultZesaruxPath = '/home/raul/bin/zesarux/zesarux';
-        const zesaruxPath = config.zesaruxPath || defaultZesaruxPath;
-        const debugPort = config.debugPort || 10000;
-        let program = config.program;
-
-        // Compilar el main.bas del workspace actual y dejar el .tap en dist/
-        const workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
-        const mainBas = path.join(workspaceFolder, 'main.bas');
-        const distFolder = path.join(workspaceFolder, 'dist');
-        if (!fs.existsSync(distFolder)) {
-            fs.mkdirSync(distFolder, { recursive: true });
-        }
-        const outputTap = path.join(distFolder, 'main.tap');
-        let bin;
-        if (process.platform === 'win32') {
-            bin = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbc.exe');
-        } else if (process.platform === 'linux') {
-            bin = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbc');
-        } else if (process.platform === 'darwin') {
-            bin = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbc');
-        }
-        // Comprobaciones previas
-        if (!fs.existsSync(mainBas)) {
-            const msg = `No se encuentra el archivo fuente: ${mainBas}`;
-            vscode.window.showErrorMessage(msg);
-            throw new Error(msg);
-        }
-
-        if (!fs.existsSync(bin)) {
-            const msg = `No se encuentra el compilador zxbc en: ${bin}`;
-            vscode.window.showErrorMessage(msg);
-            throw new Error(msg);
-        }
-
-        // Crear canal de salida para debug
-        let dbgOut = null;
-        try {
-            dbgOut = vscode.window.createOutputChannel('Boriel Debug');
-            dbgOut.show(true);
-            dbgOut.appendLine(`=== Compilación para debug iniciada (unificada) ===`);
-        } catch (e) {
-            console.log('[DebugStart] No se pudo crear OutputChannel:', e);
-        }
-
-        // Usar la función compileBorielBasic para unificar compilación y respetar settings
-        // Para depuración con ZEsarUX mantener el autorun (-a) según indicación del autor de ZEsarUX,
-        // de lo contrario el control vuelve a la ROM y no se puede depurar el programa.
-        try {
-            const res = await compileBorielBasic({ forceTap: true, forceAutorun: true });
-            if (dbgOut) dbgOut.appendLine(`Compilación unificada completada: ${res.outputFile}`);
-            program = res && res.outputFile ? res.outputFile : outputTap;
-        } catch (err) {
-            const message = err && err.message ? err.message : String(err);
-            if (dbgOut) dbgOut.appendLine(`Error al compilar para debug: ${message}`);
-            console.error('[DebugStart] Error compilando:', message);
-            vscode.window.showErrorMessage(`Error al compilar para debug: ${message}`);
-            throw err;
-        }
-
-        if (!fs.existsSync(program)) {
-            const msg = `La compilación finalizó pero no se encontró ${program}`;
-            if (dbgOut) dbgOut.appendLine(msg);
-            throw new Error(msg);
-        }
-
-        // Comprobar existencia y permisos de ZEsarUX
-        if (!fs.existsSync(zesaruxPath)) {
-            vscode.window.showErrorMessage(`No se encuentra el ejecutable ZEsarUX en: ${zesaruxPath}`);
-            throw new Error(`No se encuentra el ejecutable ZEsarUX en: ${zesaruxPath}`);
-        }
-        try {
-            fs.accessSync(zesaruxPath, fs.constants.X_OK);
-        } catch (permErr) {
-            vscode.window.showErrorMessage(`El ejecutable ZEsarUX no tiene permisos de ejecución: ${zesaruxPath}`);
-            throw new Error(`El ejecutable ZEsarUX no tiene permisos de ejecución: ${zesaruxPath}`);
-        }
-
-        // Iniciar ZEsarUX con el protocolo de debug remoto habilitado
-        const zesaruxArgs = [
-            '--enable-remoteprotocol',
-            `--remoteprotocol-port=${debugPort}`,
-            '--noconfigfile',
-            '--machine', '128k',
-            '--tape', program
-        ];
-
-        this._zesaruxProcess = child_process.spawn(zesaruxPath, zesaruxArgs);
-
-        this._zesaruxProcess.on('error', (err) => {
-            vscode.window.showErrorMessage(`Error al iniciar ZEsarUX: ${err.message}`);
-        });
-
-        // Esperar un momento para que ZEsarUX inicie
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // Conectar al protocolo de debug remoto
-        this._debugSocket = new net.Socket();
-
-        // Leer la dirección ORG del proyecto para el primer breakpoint
-        const org = config.org || 32768;
-        // Enviar el comando de breakpoint en la primera dirección de código
-        // El comando para ZEsarUX es: "break set <address>"
-        // Parar en la primera instrucción del programa
-
-        return new Promise((resolve, reject) => {
-            this._debugSocket.connect(debugPort, 'localhost', () => {
-                console.log('Conectado al protocolo de debug de ZEsarUX');
-                // Pausar la CPU antes de establecer el breakpoint
-                // Pausar la CPU antes de establecer el breakpoint
-                this.sendCommand('cpu pause');
-                // Intentar usar el nuevo protocolo de breakpoints, con formato sin prefijo (ZEsarUX espera '8000' en lugar de '0x8000')
-                this.sendCommand('enable-breakpoints');
-                this.sendCommand(`set-breakpoint 1 PC=${org.toString(16).toUpperCase()}H`);
-                // Continuar la CPU (se detendrá en el breakpoint)
-                this.sendCommand('cpu continue');
-                resolve();
-            });
-
-            this._debugSocket.on('error', (err) => {
-                reject(new Error(`Error de conexión: ${err.message}`));
-            });
-        });
-    }
-
-    stop() {
-        if (this._debugSocket) {
-            this._debugSocket.destroy();
-            this._debugSocket = null;
-        }
-
-        if (this._zesaruxProcess) {
-            this._zesaruxProcess.kill();
-            this._zesaruxProcess = null;
-        }
-    }
-
-    sendCommand(command) {
-        if (this._debugSocket && !this._debugSocket.destroyed) {
-            this._debugSocket.write(command + '\n');
-        }
-    }
-}

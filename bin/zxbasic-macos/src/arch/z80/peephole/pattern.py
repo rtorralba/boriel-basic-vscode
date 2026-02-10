@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import itertools
 import re
 
@@ -10,7 +17,7 @@ class BasicLinePattern:
     $1 a pattern variable
     """
 
-    __slots__ = "line", "vars", "re_pattern", "re", "output"
+    __slots__ = "line", "output", "re", "re_pattern", "vars"
 
     @staticmethod
     def sanitize(pattern):
@@ -68,7 +75,7 @@ class LinePattern(BasicLinePattern):
     If it matched, the vars_ dictionary will be updated with unified vars.
     """
 
-    __slots__ = "line", "vars", "re_pattern", "re", "output"
+    __slots__ = "line", "output", "re", "re_pattern", "vars"
 
     def match(self, line: str, vars_: dict[str, str]) -> bool:
         match = self.re.match(line)

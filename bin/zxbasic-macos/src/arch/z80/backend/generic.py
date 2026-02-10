@@ -1,6 +1,9 @@
-# ----------------------------------------------------------
-# Generic instructions
-# ----------------------------------------------------------
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
 
 import re
 
@@ -272,12 +275,13 @@ def _larrd(ins: Quad):
     if not isinstance(bounds, list) or len(bounds) not in (0, 2):
         raise InvalidIC(ins, "Bounds list length must be 0 or 2, not %s" % ins[5])
 
-    if bounds:
+    have_bounds = bounds and any(x != "0" for x in bounds)
+    if have_bounds:
         output.extend(
             [
-                "ld hl, %s" % bounds[1],
+                "ld hl, %s" % bounds[1],  # UBOUND Table PTR
                 "push hl",
-                "ld hl, %s" % bounds[0],
+                "ld hl, %s" % bounds[0],  # LBOUND Table PTR
                 "push hl",
             ]
         )
@@ -297,12 +301,12 @@ def _larrd(ins: Quad):
     )
 
     if must_initialize:
-        if not bounds:
+        if not have_bounds:
             output.append(runtime_call(RuntimeLabel.ALLOC_INITIALIZED_LOCAL_ARRAY))
         else:
             output.append(runtime_call(RuntimeLabel.ALLOC_INITIALIZED_LOCAL_ARRAY_WITH_BOUNDS))
     else:
-        if not bounds:
+        if not have_bounds:
             output.append(runtime_call(RuntimeLabel.ALLOC_LOCAL_ARRAY))
         else:
             output.append(runtime_call(RuntimeLabel.ALLOC_LOCAL_ARRAY_WITH_BOUNDS))
@@ -340,8 +344,11 @@ def _cast(ins: Quad):
 
     xsB = sB = YY_TYPES[tB]  # Type sizes
 
+    if tA in ("u8", "i8") and tB == "bool":
+        return []  # bytes are booleans already (0 = False, not 0 = True)
+
     output = []
-    if tA in ("u8", "i8"):
+    if tA in ("u8", "i8", "bool"):
         output.extend(Bits8.get_oper(ins[4]))
     elif tA in ("u16", "i16"):
         output.extend(Bits16.get_oper(ins[4]))
@@ -364,6 +371,8 @@ def _cast(ins: Quad):
         output.extend(to_fixed(tA))
     elif tB == "f":
         output.extend(to_float(tA))
+    else:
+        raise exception.GenericError("Internal error: invalid typecast from %s to %s" % (tA, tB))
 
     xsB += sB % 2  # make it even (round up)
 

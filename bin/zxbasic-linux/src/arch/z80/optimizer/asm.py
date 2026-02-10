@@ -1,3 +1,10 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 import re
 from functools import lru_cache
 
@@ -13,7 +20,7 @@ Z80_PATTERN: dict[re.Pattern, z80.Opcode] = {}
 class Asm:
     """Defines an asm instruction"""
 
-    __slots__ = "inst", "oper", "asm", "cond", "output", "_bytes", "_max_tstates", "is_label"
+    __slots__ = "_bytes", "_max_tstates", "asm", "cond", "inst", "is_label", "oper", "output"
 
     _operands_cache: dict[str, list[str]] = {}
 
@@ -189,8 +196,7 @@ class Asm:
         if ins in {"sub", "add", "sbc", "adc"}:
             if len(op) == 1:
                 return "a", "f"
-            else:
-                return tuple(single_registers(op[0]) + ["f"])
+            return tuple(single_registers(op[0]) + ["f"])
 
         if ins == "djnz":
             return "b", "f"
@@ -202,7 +208,7 @@ class Asm:
             return "f", "b", "c", "h", "l"
 
         if ins in ("pop", "ld"):
-            return single_registers(op[0])
+            return tuple(single_registers(op[0]))
 
         if ins in {"inc", "dec", "sbc", "rr", "rl", "rrc", "rlc"}:
             return tuple(["f"] + single_registers(op[0]))

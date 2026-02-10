@@ -1,8 +1,15 @@
+# --------------------------------------------------------------------
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# © Copyright 2008-2024 José Manuel Rodríguez de la Rosa and contributors.
+# See the file CONTRIBUTORS.md for copyright details.
+# See https://www.gnu.org/licenses/agpl-3.0.html for details.
+# --------------------------------------------------------------------
+
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from enum import Enum, unique
+from enum import StrEnum, unique
 from typing import Any
 
 from src.api import utils
@@ -13,7 +20,7 @@ from .template import UnboundVarError
 
 
 @unique
-class FN(str, Enum):
+class FN(StrEnum):
     OP_NOT = "!"
     OP_PLUS = "+"
     OP_EQ = "=="
@@ -75,8 +82,8 @@ UNARY: dict[FN, Callable[[str], str | None | bool]] = {
     FN.CTEST: lambda x: memcell.MemCell(x, 1).condition_flag,  # condition test, if any. E.g. retz returns 'z'
     FN.NEEDS: lambda x: memcell.MemCell(x[0], 1).needs(x[1]),
     FN.FLAGVAL: lambda x: helpers.new_tmp_val(),
-    FN.OP1: lambda x: (x.strip().replace(",", " ", 1).split() + [""])[1],
-    FN.OP2: lambda x: (x.strip().replace(",", " ", 1).split() + ["", ""])[2],
+    FN.OP1: lambda x: (x.strip().replace(",", " ", 1).split() + [""])[1],  # 1st Operand of an instruction or ""
+    FN.OP2: lambda x: (x.strip().replace(",", " ", 1).split() + ["", ""])[2],  # 2nd Operand of an instruction or ""
 }
 
 # Binary operators
@@ -106,7 +113,7 @@ class Number:
 
     def __init__(self, value):
         if isinstance(value, Number):
-            self.value = value.value
+            self.value: int | None = value.value
             return
         self.value = utils.parse_int(str(value))
 
@@ -164,7 +171,7 @@ class Evaluator:
             +  (addition or concatenation for strings)
     """
 
-    __slots__ = "str_", "expression"
+    __slots__ = "expression", "str_"
 
     def __init__(self, expression):
         """Initializes the object parsing the expression and preparing it for its (later)
@@ -195,7 +202,7 @@ class Evaluator:
             expression[2] = Evaluator(expression[2])
         else:  # It's a list
             assert len(expression) % 2  # Must be odd length
-            assert all(x == FN.OP_COMMA for i, x in enumerate(expression) if i % 2)
+            assert all(x == FN.OP_COMMA for i, x in enumerate(expression) if i % 2), f"Invalid expression {expression}"
             self.expression = [Evaluator(x) if not i % 2 else x for i, x in enumerate(expression)]
 
     @staticmethod
@@ -207,7 +214,7 @@ class Evaluator:
             return ""
         return str(value)
 
-    def eval(self, vars_: dict[str, Any] | None = None) -> str | Evaluator | list[Any]:
+    def eval(self, vars_: dict[str, Any] | None = None) -> str | Evaluator | list[Any] | bool:
         if vars_ is None:
             vars_ = {}
 
@@ -215,28 +222,39 @@ class Evaluator:
             val = self.expression[0]
             if not isinstance(val, str):
                 return val
+
             if val == "$":
                 return val
+
             if not RE_SVAR.match(val):
                 return val
+
             if val not in vars_:
                 raise UnboundVarError(f"Unbound variable '{val}'")
+
             return vars_[val]
 
         if len(self.expression) == 2:
-            oper = self.expression[0]
-            assert oper in UNARY
+            try:
+                oper = FN(self.expression[0])
+                assert oper in UNARY
+            except (AssertionError, ValueError):
+                raise ValueError(f"Invalid unary operator '{self.expression[0]}'")
+
             operand = self.expression[1].eval(vars_)
-            # FIXME
-            return self.normalize(UNARY[oper](operand))  # type: ignore[index]
+            return self.normalize(UNARY[oper](operand))
 
         if len(self.expression) == 3 and self.expression[1] != FN.OP_COMMA:
-            assert self.expression[1] in BINARY
+            try:
+                oper = FN(self.expression[1])
+                assert oper in BINARY
+            except (AssertionError, ValueError):
+                raise ValueError(f"Invalid binary operator '{self.expression[1]}'")
+
             # Do lazy evaluation
             left_ = lambda: self.expression[0].eval(vars_)
             right_ = lambda: self.expression[2].eval(vars_)
-            # FIXME
-            return self.normalize(BINARY[self.expression[1]](left_, right_))  # type: ignore[index]
+            return self.normalize(BINARY[oper](left_, right_))
 
         # It's a list
         return [x.eval(vars_) for i, x in enumerate(self.expression) if not i % 2]
