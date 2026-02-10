@@ -773,7 +773,7 @@ function activate(context) {
             vscode.window.showErrorMessage('No se ha especificado la ruta de ZEsarUX o el archivo .tap.');
             return;
         }
-        const zesaruxCmd = `${zesaruxPath} --enable-remoteprotocol --remoteprotocol-port=${debugPort} --noconfigfile --machine 128k --tape ${program}`;
+        const zesaruxCmd = `${zesaruxPath} --enable-remoteprotocol --remoteprotocol-port=${debugPort} --noconfigfile --machine 128k --no-realvideo --tape ${program}`;
         try {
             if (!fs.existsSync(zesaruxPath)) {
                 vscode.window.showErrorMessage(`No se encuentra el ejecutable ZEsarUX en: ${zesaruxPath}`);
