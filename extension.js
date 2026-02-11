@@ -1,29 +1,4 @@
-    // Generar archivo .map para Dezog tras compilar ASM
-    function generateDezogMap(linemapPath, asmPath, mapPath, orgAddr = 32768) {
-        if (!fs.existsSync(linemapPath) || !fs.existsSync(asmPath)) return;
-        const linemap = JSON.parse(fs.readFileSync(linemapPath, 'utf8'));
-        const asmLines = fs.readFileSync(asmPath, 'utf8').split('\n');
-        // Calcular offset por línea ASM (asume 1 byte por instrucción)
-        let offset = 0;
-        const asmLineToOffset = {};
-        asmLines.forEach((line, idx) => {
-            const l = line.trim();
-            if (l && !l.startsWith(';') && !l.startsWith('#') && !l.startsWith('END') && !l.startsWith('ASM')) {
-                asmLineToOffset[idx + 1] = offset;
-                offset += 1;
-            }
-        });
-        let mapText = '; Dezog MAP: Boriel line -> address\n';
-        for (const borielLine in linemap) {
-            const asmLinesArr = linemap[borielLine];
-            for (const asmLine of asmLinesArr) {
-                const addr = orgAddr + (asmLineToOffset[asmLine] || 0);
-                mapText += `LINE ${borielLine} $${addr.toString(16).padStart(4, '0').toUpperCase()}\n`;
-            }
-        }
-        fs.writeFileSync(mapPath, mapText, 'utf8');
-    }
-const path = require('path');
+    const path = require('path');
 const vscode = require('vscode');
 const {
     LanguageClient,
@@ -41,7 +16,7 @@ function compileBorielBasic(options = {}) {
         console.log('[COMPILACIÓN] FUNCIÓN compileBorielBasic INICIADA');
         console.log('==========================================');
 
-        vscode.window.showInformationMessage('🔧 COMPILACIÓN INICIADA - compileBorielBasic ejecutándose');
+        vscode.window.showInformationMessage('🔧 Compilando Boriel Basic...');
 
         // Obtener configuraciones del usuario
         const config = vscode.workspace.getConfiguration('borielBasic');
@@ -55,295 +30,110 @@ function compileBorielBasic(options = {}) {
 
         console.log('[Compilación] Configuración:', { mainFile, optimizeLevel, outputFormat });
 
-        // Obtener la carpeta del workspace lo antes posible (se usa más abajo)
-    const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
-        ? vscode.workspace.workspaceFolders[0].uri.fsPath
-        : process.cwd();
+        // Obtener la carpeta del workspace
+        const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
+            ? vscode.workspace.workspaceFolders[0].uri.fsPath
+            : process.cwd();
 
-    // Determinar el archivo fuente a usar: preferir la configuración 'mainFile' si existe,
-    // en caso contrario usar el archivo activo en el editor si hay uno abierto.
-    const editor = vscode.window.activeTextEditor;
-    let sourceFilePath = null;
-    if (mainFile) {
-        sourceFilePath = path.isAbsolute(mainFile) ? mainFile : path.join(workspaceFolder, mainFile);
-        if (!fs.existsSync(sourceFilePath)) {
-            // si la ruta de configuración no existe, no fallar inmediatamente: intentar usar el editor activo
-            sourceFilePath = null;
-        }
-    }
-    if (!sourceFilePath && editor && editor.document && editor.document.uri) {
-        sourceFilePath = editor.document.uri.fsPath;
-    }
-    if (!sourceFilePath) {
-        // Intentar heurística: preferir main.bas en la raíz del workspace (útil cuando el usuario abre 'test' como workspace),
-        // y como alternativa mantener compatibilidad con el repo que guarda el ejemplo en test/main.bas
-        const workspaceMain = path.join(workspaceFolder, 'main.bas');
-        if (fs.existsSync(workspaceMain)) {
-            sourceFilePath = workspaceMain;
-        } else {
-            const testMain = path.join(workspaceFolder, 'test', 'main.bas');
-            if (fs.existsSync(testMain)) {
-                sourceFilePath = testMain;
+        // Determinar el archivo fuente a usar
+        const editor = vscode.window.activeTextEditor;
+        let sourceFilePath = null;
+        
+        if (mainFile) {
+            sourceFilePath = path.isAbsolute(mainFile) ? mainFile : path.join(workspaceFolder, mainFile);
+            if (!fs.existsSync(sourceFilePath)) {
+                sourceFilePath = null;
             }
         }
-    }
-
-    if (!sourceFilePath) {
-        const msg = 'No se pudo determinar el archivo fuente a compilar. Configura "borielBasic.mainFile" o abre el archivo a compilar.';
-        vscode.window.showErrorMessage(msg);
-        reject(new Error(msg));
-        return;
-    }
-
-    // Comprobar el sistema operativo para ejecutar bin/zxbc.exe .linix o .macos
-
-    if (process.platform === 'win32') {
-        // Windows
-        console.log('Compilando en Windows');
-        bin = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbc.exe');
-    }
-    else if (process.platform === 'linux') {
-        // Linux
-        console.log('Compilando en Linux');
-        bin = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbc');
-    }
-    else if (process.platform === 'darwin') {
-        // MacOS
-        console.log('Compilando en MacOS');
-        bin = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbc');
-    }
-
-    // Usar dist/ en la raíz del workspace como carpeta de salida
-    const distFolder = path.join(workspaceFolder, 'dist');
-    if (!fs.existsSync(distFolder)) {
-        fs.mkdirSync(distFolder, { recursive: true });
-    }
-
-    // Construir la ruta absoluta del archivo fuente (usamos sourceFilePath resuelto arriba)
-    const mainFilePath = sourceFilePath;
-
-    const baseName = path.basename(mainFilePath, '.bas');
-    // Decide output format: respect user setting, but allow caller to force TAP (for debugger runs)
-    const forceTap = options.forceTap === true;
-    const effectiveOutputFormat = forceTap || outputFormat === 'tap' ? 'tap' : 'bin';
-    // Determine effective flags. Caller can request forceAutorun (manual compile).
-    // Always respect the user's configured includeBasicLoader, but if forceTap is requested
-    // ensure the loader is included as well.
-    const effectiveIncludeBasicLoader = includeBasicLoader || forceTap;
-    // Respect explicit forceAutorun; otherwise use the user's setting. Do NOT silently disable
-    // autorun when forceTap is used — the caller should opt-out explicitly by passing options.noAutorun.
-    const effectiveAutorun = (options.forceAutorun === true) ? true : (options.noAutorun === true ? false : autorun);
-    const outputExt = effectiveOutputFormat === 'tap' ? '.tap' : '.bin';
-    const outputFile = path.join(distFolder, baseName + outputExt);
-    const asmFile = path.join(distFolder, baseName + '.asm');
-    const asmFilePath = path.join(distFolder, baseName + '.asm');
-    const preprocessedFile = path.join(distFolder, baseName + '.preprocessed.bas');
-    const lineMapFile = path.join(distFolder, baseName + '.linemap.json');
-
-    // Pre-procesar el archivo .bas para añadir marcadores de línea
-    console.log('[Compilación] Pre-procesando archivo para debug...');
-    console.log('[Compilación] mainFilePath:', mainFilePath);
-    console.log('[Compilación] preprocessedFile:', preprocessedFile);
-    
-    try {
-        const sourceContent = fs.readFileSync(mainFilePath, 'utf8');
-        const sourceLines = sourceContent.split('\n');
-        const preprocessedLines = [];
         
-        sourceLines.forEach((line, index) => {
-            const originalLineNumber = index + 1;
-            const trimmedLine = line.trim();
-
-            // Solo añadir marcadores para líneas de código real (no vacías, no comentarios)
-            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.startsWith('REM')) {
-                // Añadir marcador ANTES de la línea de código
-                preprocessedLines.push(`ASM`);
-                preprocessedLines.push(`; __BASLINE:${originalLineNumber}__`);
-                preprocessedLines.push(`END ASM`);
+        if (!sourceFilePath && editor && editor.document && editor.document.uri) {
+            sourceFilePath = editor.document.uri.fsPath;
+        }
+        
+        if (!sourceFilePath) {
+            const workspaceMain = path.join(workspaceFolder, 'main.bas');
+            if (fs.existsSync(workspaceMain)) {
+                sourceFilePath = workspaceMain;
+            } else {
+                const testMain = path.join(workspaceFolder, 'test', 'main.bas');
+                if (fs.existsSync(testMain)) {
+                    sourceFilePath = testMain;
+                }
             }
+        }
 
-            // Añadir la línea original
-            preprocessedLines.push(line);
-        });
-        
-        fs.writeFileSync(preprocessedFile, preprocessedLines.join('\n'), 'utf8');
-        
-        console.log(`[Compilación] ✓ Archivo pre-procesado guardado en: ${preprocessedFile}`);
-        console.log(`[Compilación] ✓ Total de líneas originales: ${sourceLines.length}`);
-        console.log(`[Compilación] ✓ Preview de preprocessed:`);
-        console.log(preprocessedLines.slice(0, 20).join('\n'));
-    } catch (preError) {
-        console.error('[Compilación] ✗ Error en pre-procesamiento:', preError);
-        const message = preError && preError.message ? preError.message : String(preError);
-        vscode.window.showErrorMessage(`Error al pre-procesar: ${message}`);
-        reject(new Error(message));
-        return;
-    }
-
-    // Construir el comando de compilación para .tap usando el archivo fuente original
-    // (evita usar un .preprocessed viejo por error). Generaremos el .tap a partir
-    // del `mainFilePath`, y generaremos el .asm a partir del archivo preprocesado
-    // (que sí contiene los marcadores para mapear líneas).
-    const args = [
-        `-O=${optimizeLevel}`,
-        `-S=${org}`,
-        `-H=${heapSize}`,
-    effectiveIncludeBasicLoader ? '-B' : '',
-    effectiveAutorun ? '-a' : '',
-        // Use -t or -T depending on effectiveOutputFormat
-        effectiveOutputFormat === 'tap' ? '-t' : '-T',
-    ].filter(arg => arg !== ''); // Eliminar argumentos vacíos
-    // Para evitar usar un preprocessed viejo que pudiera existir en dist/, compilamos
-    // el TAP directamente desde el archivo fuente original (`mainFilePath`).
-    const command = `${bin} ${args.join(' ')} "${mainFilePath}" -o "${outputFile}"`;
-    
-    // Comando adicional para generar el .asm usando el archivo pre-procesado
-    const asmArgs = [
-        `-O=${optimizeLevel}`,
-        `-S=${org}`,
-        `-H=${heapSize}`,
-        '-A', // Genera .asm
-    ].filter(arg => arg !== '');
-    // Generar ASM usando el archivo preprocesado (contiene marcadores __BASLINE)
-    const asmCommand = `${bin} ${asmArgs.join(' ')} "${preprocessedFile}" -o "${asmFile}"`;
-    
-    console.log(`[Compilación] Ejecutando comando TAP: ${command}`);
-    console.log(`[Compilación] Ejecutando comando ASM: ${asmCommand}`);
-    console.log(`[Compilación] ASM File path: ${asmFile}`);
-
-    let outputChannel = vscode.window.createOutputChannel('Boriel Basic');
-    outputChannel.clear();
-    outputChannel.show(true);
-    outputChannel.appendLine('=== Iniciando compilación ===');
-    outputChannel.appendLine(`Archivo fuente: ${mainFilePath}`);
-    outputChannel.appendLine(`Archivo pre-procesado: ${preprocessedFile}`);
-    outputChannel.appendLine(`Archivo TAP: ${outputFile}`);
-    outputChannel.appendLine(`Archivo ASM: ${asmFile}`);
-    outputChannel.appendLine(`Mapeo de líneas: ${lineMapFile}\n`);
-    
-    // Ejecutar el comando para .tap
-    child_process.exec(command, { cwd: workspaceFolder }, (error, stdout, stderr) => {
-        if (error) {
-            outputChannel.appendLine(`✗ Error al compilar TAP:\n${stderr}`);
-            vscode.window.showErrorMessage(`Error al compilar: ${stderr}`);
-            console.error(`[Compilación] Error: ${stderr}`);
-            reject(new Error(stderr || 'Error al compilar TAP'));
+        if (!sourceFilePath) {
+            const msg = 'No se pudo determinar el archivo fuente a compilar. Configura "borielBasic.mainFile" o abre el archivo a compilar.';
+            vscode.window.showErrorMessage(msg);
+            reject(new Error(msg));
             return;
         }
 
-        outputChannel.appendLine(`✓ Compilación TAP completada: ${outputFile}\n`);
-        outputChannel.appendLine(stdout || '');
+        // Determinar binario del compilador según plataforma
+        let bin;
+        if (process.platform === 'win32') {
+            console.log('Compilando en Windows');
+            bin = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbc.exe');
+        } else if (process.platform === 'linux') {
+            console.log('Compilando en Linux');
+            bin = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbc');
+        } else if (process.platform === 'darwin') {
+            console.log('Compilando en MacOS');
+            bin = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbc');
+        }
 
-        // Ahora compilar el .asm
-        outputChannel.appendLine(`\n=== Generando archivo ASM ===`);
-        outputChannel.appendLine(`Comando: ${asmCommand}\n`);
-        child_process.exec(asmCommand, { cwd: workspaceFolder }, (asmError, asmStdout, asmStderr) => {
-            if (asmError) {
-                outputChannel.appendLine(`\n✗ Error al generar ASM:\n${asmStderr}`);
-                console.error(`[Compilación] Error ASM: ${asmStderr}`);
-                vscode.window.showWarningMessage(`TAP compilado, pero ASM falló: ${asmStderr}`);
-                // Even if ASM fails, resolve with TAP path so debugger can run
-                resolve({ outputFile, asmFile: null, binFile: null });
+        // Crear carpeta de salida dist/
+        const distFolder = path.join(workspaceFolder, 'dist');
+        if (!fs.existsSync(distFolder)) {
+            fs.mkdirSync(distFolder, { recursive: true });
+        }
+
+        const baseName = path.basename(sourceFilePath, '.bas');
+        const effectiveOutputFormat = options.forceTap || outputFormat === 'tap' ? 'tap' : 'bin';
+        const effectiveIncludeBasicLoader = includeBasicLoader || options.forceTap;
+        const effectiveAutorun = options.forceAutorun === true ? true : (options.noAutorun === true ? false : autorun);
+        const outputExt = effectiveOutputFormat === 'tap' ? '.tap' : '.bin';
+        const outputFile = path.join(distFolder, baseName + outputExt);
+
+        // Construir comando de compilación
+        const args = [
+            `-O=${optimizeLevel}`,
+            `-S=${org}`,
+            `-H=${heapSize}`,
+            effectiveIncludeBasicLoader ? '-B' : '',
+            effectiveAutorun ? '-a' : '',
+            effectiveOutputFormat === 'tap' ? '-t' : '-T',
+        ].filter(arg => arg !== '');
+
+        const command = `${bin} ${args.join(' ')} "${sourceFilePath}" -o "${outputFile}"`;
+        
+        console.log(`[Compilación] Ejecutando comando: ${command}`);
+
+        let outputChannel = vscode.window.createOutputChannel('Boriel Basic');
+        outputChannel.clear();
+        outputChannel.show(true);
+        outputChannel.appendLine('=== Iniciando compilación ===');
+        outputChannel.appendLine(`Archivo fuente: ${sourceFilePath}`);
+        outputChannel.appendLine(`Archivo salida: ${outputFile}\n`);
+        
+        // Ejecutar compilación
+        child_process.exec(command, { cwd: workspaceFolder }, (error, stdout, stderr) => {
+            if (error) {
+                outputChannel.appendLine(`✗ Error al compilar:\n${stderr}`);
+                vscode.window.showErrorMessage(`Error al compilar: ${stderr}`);
+                console.error(`[Compilación] Error: ${stderr}`);
+                reject(new Error(stderr || 'Error al compilar'));
                 return;
             }
-            outputChannel.appendLine(`\n✓ Compilación ASM completada: ${asmFile}\n`);
-            outputChannel.appendLine(asmStdout || '');
-            console.log(`[Compilación] Salida ASM: ${asmStdout}`);
 
-            // Generar el mapeo línea a línea
-            try {
-                const lineMap = generateLineMap(asmFilePath);
-                fs.writeFileSync(lineMapFile, JSON.stringify(lineMap, null, 2), 'utf8');
-                outputChannel.appendLine(`\n✓ Mapeo de líneas generado: ${lineMapFile}\n`);
-                outputChannel.appendLine(`   Total de líneas Boriel mapeadas: ${Object.keys(lineMap).length}\n`);
-                console.log(`[Compilación] Mapeo generado: ${Object.keys(lineMap).length} entradas`);
-            } catch (mapError) {
-                outputChannel.appendLine(`\n⚠ No se pudo generar el mapeo de líneas: ${mapError.message}\n`);
-                console.error(`[Compilación] Error generando mapeo: ${mapError}`);
-            }
-
-            // Ensamblar ASM con zxbasm para generar binario y listado
-            let zxbasmPath;
-            if (process.platform === 'win32') {
-                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbasm.exe');
-            } else if (process.platform === 'linux') {
-                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
-            } else if (process.platform === 'darwin') {
-                zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbasm');
-            }
-            const binFile = path.join(distFolder, baseName + '.bin');
-            const lstFile = path.join(distFolder, baseName + '.lst');
-            const zxbasmCmd = `${zxbasmPath} ${asmFilePath} -o ${binFile}`;
-            outputChannel.appendLine(`\n=== Ensamblando ASM con zxbasm ===`);
-            outputChannel.appendLine(`Comando: ${zxbasmCmd}\n`);
-            child_process.exec(zxbasmCmd, { cwd: workspaceFolder }, (zxError, zxStdout, zxStderr) => {
-                if (zxError) {
-                    outputChannel.appendLine(`\n✗ Error al ensamblar ASM con zxbasm:\n${zxStderr}`);
-                    vscode.window.showWarningMessage(`ASM generado, pero zxbasm falló: ${zxStderr}`);
-                    // Resolve with asmFile present but no bin
-                    resolve({ outputFile, asmFile: asmFilePath, binFile: null });
-                } else {
-                    outputChannel.appendLine(`\n✓ Ensamblado ASM completado: ${binFile}`);
-                    outputChannel.appendLine(zxStdout || '');
-                    vscode.window.showInformationMessage(`Compilación completada: ${outputFile} + ${asmFile} + ${binFile}`);
-                    // Generar el archivo .map para Dezog
-                    const dezogMapPath = path.join(distFolder, baseName + '.dezog.map');
-                    generateDezogMap(lineMapFile, asmFilePath, dezogMapPath, org);
-                    outputChannel.appendLine(`\n✓ Mapeo Dezog generado: ${dezogMapPath}`);
-                    resolve({ outputFile, asmFile: asmFilePath, binFile });
-                }
-            });
+            outputChannel.appendLine(`✓ Compilación completada: ${outputFile}\n`);
+            outputChannel.appendLine(stdout || '');
+            vscode.window.showInformationMessage(`✓ Compilación completada: ${path.basename(outputFile)}`);
+            console.log(`[Compilación] Completada exitosamente`);
+            resolve({ outputFile });
         });
     });
-    });
 }
-
-function generateLineMap(asmFilePath) {
-    const asmContent = fs.readFileSync(asmFilePath, 'utf8');
-    const asmLines = asmContent.split('\n');
-    const lineMap = {};
-    
-    let currentBorielLine = null;
-    
-    asmLines.forEach((line, asmIndex) => {
-        // Buscar nuestros marcadores personalizados: ; __BASLINE:N__
-        const basLineMatch = line.match(/;\s*__BASLINE:(\d+)__/);
-        if (basLineMatch) {
-            currentBorielLine = parseInt(basLineMatch[1]);
-            console.log(`[LineMap] Encontrado marcador BASLINE:${currentBorielLine} en ASM línea ${asmIndex + 1}`);
-            return; // El marcador mismo no cuenta como línea de código
-        }
-        
-        // Si NO estamos dentro de un bloque marcado, ignorar esta línea
-        if (currentBorielLine === null) {
-            return;
-        }
-        
-        // Si esta línea tiene código real (no comentario, no directiva, no vacía)
-        const trimmed = line.trim();
-        if (trimmed && 
-            !trimmed.startsWith(';') && 
-            !trimmed.startsWith('#') &&
-            !trimmed.startsWith('.') &&  // Ignorar etiquetas de biblioteca
-            trimmed !== 'END ASM' &&
-            trimmed !== 'ASM') {
-            
-            if (!lineMap[currentBorielLine]) {
-                lineMap[currentBorielLine] = [];
-            }
-            lineMap[currentBorielLine].push(asmIndex + 1);
-            console.log(`[LineMap] Línea Boriel ${currentBorielLine} -> ASM línea ${asmIndex + 1}: ${trimmed.substring(0, 40)}`);
-        }
-    });
-    
-    console.log(`[LineMap] Total líneas Boriel mapeadas: ${Object.keys(lineMap).length}`);
-    Object.keys(lineMap).forEach(borielLine => {
-        console.log(`[LineMap] Boriel ${borielLine}: ${lineMap[borielLine].length} líneas ASM`);
-    });
-    
-    return lineMap;
-}
-
 
 async function ensureZXP2BorielInstalled(context) {
     const venvPath = path.join(context.extensionPath, 'venv');

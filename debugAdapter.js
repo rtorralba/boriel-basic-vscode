@@ -292,7 +292,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 // Insertamos una etiqueta ASM __BASLINE_n__: que será visible
                                 // en el ASM generado. No añadimos instrucciones extra (nop) aquí.
                                 preprocessedLines.push(`ASM`);
-                                preprocessedLines.push(`__BASLINE_${originalLineNumber}__:`);
+                                preprocessedLines.push(`__BASLINE_${originalLineNumber}__${path.basename(mainBas).replace(/\./g, '_')}__:`);
                                 preprocessedLines.push(`END ASM`);
                             }
 
@@ -693,11 +693,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const hex = md[2];
                     const addrDec = parseInt(hex, 16);
                     // If it's a BASLINE marker, store in asmLabelAddressMap keyed by line number
-                    const mBas = name.match(/^__BASLINE_(\d+)__$/i);
+                    // New format: __BASLINE_N__filename__ (e.g., __BASLINE_5__main_bas__)
+                    const mBas = name.match(/^__BASLINE_(\d+)__([A-Za-z0-9_]+)__$/i);
                     if (mBas) {
                         const basNum = parseInt(mBas[1], 10);
-                        this._asmLabelAddressMap[basNum] = addrDec;
-                        this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BASLINE_${basNum} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
+                        const filenamePart = mBas[2]; // e.g., "main_bas"
+                        const sourceFileName = filenamePart.replace(/_/g, '.'); // Convert back: "main.bas"
+                        this._asmLabelAddressMap[basNum] = { addr: addrDec, sourceFile: sourceFileName };
+                        this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BASLINE_${basNum} from ${sourceFileName} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
                     } else {
                         // store other symbol labels
                         this._asmSymbolAddressMap[name] = addrDec;
@@ -852,24 +855,32 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this.sendEvent(new OutputEvent(`[Debug] ✓ Using ${Object.keys(this._asmLabelAddressMap).length} addresses from zxbasm Declaring lines\n`));
             for (const [k, v] of Object.entries(this._asmLabelAddressMap)) {
                 const bas = parseInt(k, 10);
-                const addrNum = parseInt(v, 10);
+                // v is now { addr, sourceFile }
+                const addrNum = typeof v === 'object' ? v.addr : parseInt(v, 10);
+                const extractedSourceFile = typeof v === 'object' ? v.sourceFile : null;
                 if (!isNaN(bas) && !isNaN(addrNum)) {
                     this._basLineToAddress[bas] = addrNum;
-                    this.sendEvent(new OutputEvent(`[Debug]   BASLINE_${bas} -> 0x${addrNum.toString(16).toUpperCase()}\n`));
+                    // Store sourceFile info for later use in linemap
+                    if (!this._basLineToSourceFile) this._basLineToSourceFile = {};
+                    if (extractedSourceFile) this._basLineToSourceFile[bas] = extractedSourceFile;
+                    this.sendEvent(new OutputEvent(`[Debug]   BASLINE_${bas} -> 0x${addrNum.toString(16).toUpperCase()}${extractedSourceFile ? ` (${extractedSourceFile})` : ''}\n`));
                 }
             }
             // Don't run fallback heuristic if we have authoritative addresses from zxbasm
         } else {
             this.sendEvent(new OutputEvent(`[Debug][WARNING] ⚠ No zxbasm Declaring addresses found! Falling back to heuristic mapping.\n`, 'stderr'));
             
-            // Fallback heuristic: scan for __BASLINE_N__: labels in ASM and find next instruction address
+            // Fallback heuristic: scan for __BASLINE_N__filename__: labels in ASM and find next instruction address
             const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
 
             for (let i = 0; i < asmLines.length; i++) {
                 const l = asmLines[i];
-                const m = l.match(/__BASLINE_(\d+)__\s*:/);
+                // New format: __BASLINE_N__filename__:
+                const m = l.match(/__BASLINE_(\d+)__([A-Za-z0-9_]+)__\s*:/);
                 if (m) {
                     const bas = parseInt(m[1], 10);
+                    const filenamePart = m[2];
+                    const extractedSourceFile = filenamePart.replace(/_/g, '.');
                     // Buscar la primera línea ASM válida después de la etiqueta
                     let j = i + 1;
                     let foundAddr = null;
@@ -884,6 +895,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     }
                     if (foundAddr !== null) {
                         this._basLineToAddress[bas] = foundAddr;
+                        // Store sourceFile info
+                        if (!this._basLineToSourceFile) this._basLineToSourceFile = {};
+                        if (extractedSourceFile) this._basLineToSourceFile[bas] = extractedSourceFile;
                     }
                 }
             }
@@ -931,9 +945,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 }
                             }
                             
+                            // Use extracted sourceFile from label if available, otherwise use main sourceFile
+                            const lineSourceFile = (this._basLineToSourceFile && this._basLineToSourceFile[borielLineNum]) 
+                                ? path.join(path.dirname(sourceFile || ''), this._basLineToSourceFile[borielLineNum])
+                                : (sourceFile || null);
+                            
                             reverseExtended[`${hex}H`] = {
                                 borielLine: borielLineNum,
-                                sourceFile: sourceFile || null,
+                                sourceFile: lineSourceFile,
                                 isEndOfSub: endOfSubLines.has(borielLineNum),
                                 stepOutAddress: stepOutAddress
                             };
