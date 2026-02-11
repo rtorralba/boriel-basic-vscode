@@ -42,3 +42,5 @@ coverage/
 
 # Python virtual environment
 venv/
+
+.debug/

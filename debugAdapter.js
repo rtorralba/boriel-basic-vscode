@@ -186,8 +186,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             console.error('[BorielBasic Debug] Configuración final:', { zesaruxPath, debugPort, program, stopOnEntry });
             
-            // Cargar el mapeo de líneas si existe
-            const lineMapFile = program.replace(/\.tap$/i, '.linemap.json');
+            // Preparar carpeta .debug para archivos intermedios
+            const programDir = path.dirname(program);
+            const workspaceDir = path.dirname(programDir);
+            const debugDir = path.join(workspaceDir, '.debug');
+            if (!fs.existsSync(debugDir)) {
+                fs.mkdirSync(debugDir, { recursive: true });
+            }
+            const baseName = path.basename(program, '.tap');
+            
+            // Cargar el mapeo de líneas si existe (ahora en .debug/)
+            const lineMapFile = path.join(debugDir, baseName + '.linemap.json');
             if (fs.existsSync(lineMapFile)) {
                 try {
                     const lineMapContent = fs.readFileSync(lineMapFile, 'utf8');
@@ -242,9 +251,6 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             // Intentar compilar AUTO siempre (si existe main.bas en el workspace)
             try {
-                const programDir = path.dirname(program); // .../test/dist
-                const workspaceDir = path.dirname(programDir); // .../test
-                const baseName = path.basename(program, '.tap');
                 const mainBas = path.join(workspaceDir, baseName + '.bas');
                 // If we found the original main.bas, prefer it as the source file
                 try {
@@ -269,7 +275,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 } else {
                     // PASO 1: Pre-procesar el archivo para añadir marcadores __BASLINE
                     this.sendEvent(new OutputEvent(`[Debug] Pre-procesando archivo Boriel para debug...\n`));
-                    const preprocessedFile = program.replace('.tap', '.preprocessed.bas');
+                    const preprocessedFile = path.join(debugDir, baseName + '.preprocessed.bas');
                     
                     try {
                         const sourceContent = fs.readFileSync(mainBas, 'utf8');
@@ -323,7 +329,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     }
                     
                     // PASO 3: Compilar el ASM desde el archivo preprocesado (para obtener marcadores)
-                    const asmFile = program.replace('.tap', '.asm');
+                    const asmFile = path.join(debugDir, baseName + '.asm');
                     // Generate ASM from the preprocessed file using same optimization level
                     const asmCmd = `${bin} -O2 -A "${preprocessedFile}" -o "${asmFile}"`;
                     this.sendEvent(new OutputEvent(`[Debug] Generando ASM con marcadores: ${asmCmd}\n`));
@@ -380,10 +386,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this.sendEvent(new OutputEvent(`Iniciando ZEsarUX...\n`));
 
             // Iniciar ZEsarUX con el protocolo de debug remoto
-            // Calcular ruta del .asm generado
+            // Calcular ruta del .asm generado (en .debug/)
             let asmFile = null;
             if (program && program.endsWith('.tap')) {
-                asmFile = program.replace(/\.tap$/i, '.asm');
+                asmFile = path.join(debugDir, baseName + '.asm');
                 this._asmFile = asmFile;
                 this.sendEvent(new OutputEvent(`[Debug] Ruta ASM calculada: ${asmFile}\n`));
                 this.sendEvent(new OutputEvent(`[Debug] ¿Existe ASM?: ${fs.existsSync(asmFile)}\n`));
@@ -500,7 +506,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     // If a linemap JSON exists and its keys look like addresses (e.g. '92BBH' -> '1'),
                     // prefer the first key as the entry breakpoint (user requested behavior).
                     try {
-                        const lmPath = this._program ? this._program.replace(/\.tap$/i, '.linemap.json') : null;
+                        const lmPath = lineMapFile;
                         if (lmPath && fs.existsSync(lmPath)) {
                             const lmRaw = fs.readFileSync(lmPath, 'utf8');
                             const lmObj = JSON.parse(lmRaw);
@@ -921,7 +927,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         // Persist a small linemap with addresses next to existing linemap file if possible
         try {
                 if (this._program) {
-                    const outFile = this._program.replace(/\.tap$/i, '.linemap.json');
+                    const programDir = path.dirname(this._program);
+                    const workspaceDir = path.dirname(programDir);
+                    const debugDir = path.join(workspaceDir, '.debug');
+                    const baseName = path.basename(this._program, '.tap');
+                    const outFile = path.join(debugDir, baseName + '.linemap.json');
                     // Persist reverse mapping: { '92BBH': { borielLine: 1, sourceFile: '...', isEndOfSub: false }, ... }
                     const reverseExtended = {};
                     // Also build runtime map addrDecimal -> basLine
@@ -1162,6 +1172,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`[Debug] No se encontraron marcadores directos __BASLINE en ASM; usando fallback #line heuristic\n`));
 
                 // First, try to detect preprocessed file referenced in the ASM via #line directives
+                // It should be in .debug/ folder now
                 let detectedPreprocessedPath = null;
                 for (let i = 0; i < Math.min(200, asmLines.length); i++) {
                     const m = asmLines[i].match(/^#line\s+(\d+)\s+"([^"]+)"/);
@@ -1169,7 +1180,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 }
 
                 if (!detectedPreprocessedPath) {
-                    detectedPreprocessedPath = asmFile.replace(/\.asm$/i, '.preprocessed.bas');
+                    const asmDir = path.dirname(asmFile);
+                    const asmBase = path.basename(asmFile, '.asm');
+                    detectedPreprocessedPath = path.join(asmDir, asmBase + '.preprocessed.bas');
                 }
 
                 // Build preprocessedLine -> basLine map
