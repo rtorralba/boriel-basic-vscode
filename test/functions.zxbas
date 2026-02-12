@@ -1,3 +1,0 @@
-Function zxbasTest() as UBYTE
-    print "hola"
-End Function
