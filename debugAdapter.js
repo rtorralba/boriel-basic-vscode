@@ -34,7 +34,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._lineMap = null; // Mapeo línea Boriel -> líneas ASM
         this._reverseLineMap = null; // Mapeo línea ASM -> línea Boriel
         this._asmLineToAddress = null; // Mapeo línea ASM -> dirección
-    this._asmLabelAddressMap = {}; // mapa de etiqueta __BASLINE_N__ -> dirección (desde zxbasm Declaring)
+    this._asmLabelAddressMap = {}; // mapa de etiqueta BAS___N___filename -> dirección (desde zxbasm Declaring)
         this._lastPC = null; // último PC leído del emulador
         this._previousPC = null; // PC anterior (para detectar isEndOfSub en ambas posiciones)
         this._lastAsmLine = null; // última línea ASM conocida para PC
@@ -273,44 +273,23 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 } else if (!fs.existsSync(bin)) {
                     this.sendEvent(new OutputEvent(`[Debug] No se encontró el compilador zxbc en: ${bin} (se omitirá compilación)\n`));
                 } else {
-                    // PASO 1: Pre-procesar el archivo para añadir marcadores __BASLINE
-                    this.sendEvent(new OutputEvent(`[Debug] Pre-procesando archivo Boriel para debug...\n`));
-                    const preprocessedFile = path.join(debugDir, baseName + '.preprocessed.bas');
+                    // PASO 1: Pre-procesar TODOS los archivos .bas del proyecto
+                    this.sendEvent(new OutputEvent(`[Debug] Pre-procesando archivos .bas del proyecto...\n`));
                     
                     try {
-                        const sourceContent = fs.readFileSync(mainBas, 'utf8');
-                        const sourceLines = sourceContent.split('\n');
-                        const preprocessedLines = [];
-                        // Tokens that represent control-flow / structural statements in Boriel
-                        // for which we should NOT insert a __BASLINE label above.
-                        const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM','SUB','FUNCTION']);
-
-                        sourceLines.forEach((line, index) => {
-                            const originalLineNumber = index + 1;
-                            const trimmedLine = line.trim();
-
-                            // Solo añadir marcadores para líneas de código real (no vacías, no comentarios,
-                            // ni directivas de preprocesado como #include). Además, no insertar
-                            // antes de líneas que comienzan con If/Else/End (case-insensitive)
-                            const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
-                            if (trimmedLine && !trimmedLine.startsWith("'") && !trimmedLine.toUpperCase().startsWith('REM') && !trimmedLine.startsWith('#') && !FLOW_TOKENS.has(firstToken)) {
-                                // Añadir marcador ANTES de la línea de código.
-                                // Insertamos una etiqueta ASM __BASLINE_n__: que será visible
-                                // en el ASM generado. No añadimos instrucciones extra (nop) aquí.
-                                preprocessedLines.push(`ASM`);
-                                preprocessedLines.push(`__BASLINE_${originalLineNumber}__${path.basename(mainBas).replace(/\./g, '_')}__:`);
-                                preprocessedLines.push(`END ASM`);
-                            }
-
-                            // Añadir la línea original
-                            preprocessedLines.push(line);
-                        });
+                        // Buscar todos los archivos .bas en el workspace (excepto .debug)
+                        const allBasFiles = this._findAllBasFiles(workspaceDir, debugDir);
+                        this.sendEvent(new OutputEvent(`[Debug] Encontrados ${allBasFiles.length} archivos .bas para preprocesar\n`));
                         
-                        fs.writeFileSync(preprocessedFile, preprocessedLines.join('\n'), 'utf8');
-                        this.sendEvent(new OutputEvent(`[Debug] ✓ Pre-procesado completado: ${preprocessedFile}\n`));
+                        // Preprocesar cada archivo manteniendo la estructura de carpetas
+                        for (const basFile of allBasFiles) {
+                            this._preprocessBasFile(basFile, workspaceDir, debugDir);
+                        }
+                        
+                        this.sendEvent(new OutputEvent(`[Debug] ✓ Pre-procesado completado para todos los archivos\n`));
                     } catch (preErr) {
                         this.sendEvent(new OutputEvent(`[Debug] ⚠ Error pre-procesando: ${preErr.message}\n`, 'stderr'));
-                        this.sendEvent(new OutputEvent(`[Debug] Continuando con archivo original...\n`));
+                        this.sendEvent(new OutputEvent(`[Debug] Continuando con compilación...\n`));
                     }
                     
                     // PASO 2: Compilar el TAP desde el archivo original (para que funcione correctamente)
@@ -328,10 +307,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         this.sendEvent(new OutputEvent(`Error compilando TAP: ${stderr}\n`, 'stderr'));
                     }
                     
-                    // PASO 3: Compilar el ASM desde el archivo preprocesado (para obtener marcadores)
+                    // PASO 3: Compilar el ASM desde el archivo preprocesado principal (para obtener marcadores)
+                    const preprocessedMainFile = path.join(debugDir, baseName + '.bas');
                     const asmFile = path.join(debugDir, baseName + '.asm');
                     // Generate ASM from the preprocessed file using same optimization level
-                    const asmCmd = `${bin} -O2 -A "${preprocessedFile}" -o "${asmFile}"`;
+                    const asmCmd = `${bin} -O2 -A "${preprocessedMainFile}" -o "${asmFile}"`;
                     this.sendEvent(new OutputEvent(`[Debug] Generando ASM con marcadores: ${asmCmd}\n`));
                     try {
                         const execSync = require('child_process').execSync;
@@ -339,15 +319,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         if (out && out.length) this.sendEvent(new OutputEvent(`zxbc ASM: ${out}\n`));
                         this.sendEvent(new OutputEvent(`[Debug] ✓ ASM generado: ${asmFile}\n`));
                         
-                        // PASO 4: Asegurar que el ASM contiene marcadores visibles insertando
-                        // comentarios '; __BASLINE:N__' junto a las directivas #line (post-procesado).
-                        try {
-                            await this._injectAsmMarkers(asmFile, preprocessedFile);
-                        } catch (injErr) {
-                            this.sendEvent(new OutputEvent(`[Debug] ⚠ Error inyectando marcadores en ASM: ${injErr.message}\n`, 'stderr'));
-                        }
-
-                        // PASO 5: Generar el linemap desde el ASM con marcadores (ahora inyectados)
+                        // PASO 4: Generar el linemap desde el ASM con marcadores de las etiquetas BAS___N___filename
                         this._generateLineMapFromAsm(asmFile);
                         try {
                             await this._buildBasLineAddressMap(asmFile);
@@ -459,8 +431,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             // Habilitar breakpoints PRIMERO (requerido por ZEsarUX antes de cargar código fuente)
             try { 
-                await this._ensureBreakpointsEnabled(); 
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoints habilitados\n`));
+                await this._ensureBreakpointsEnabled();
+                if (this._breakpointsEnabled) {
+                    this.sendEvent(new OutputEvent(`[Debug] Breakpoints habilitados correctamente\n`));
+                } else {
+                    this.sendEvent(new OutputEvent(`[Debug] ⚠ Los breakpoints NO se pudieron habilitar\n`));
+                }
             } catch (e) {
                 this.sendEvent(new OutputEvent(`[Debug] No se pudieron habilitar breakpoints: ${e.message}\n`));
             }
@@ -470,7 +446,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this.sendEvent(new OutputEvent(`[Debug] asmFile = ${asmFile}\n`));
             this.sendEvent(new OutputEvent(`[Debug] existe? = ${asmFile ? fs.existsSync(asmFile) : 'N/A'}\n`));
             
-            if (asmFile && fs.existsSync(asmFile)) {
+            if (asmFile && fs.existsSync(asmFile) && this._breakpointsEnabled) {
                 this.sendEvent(new OutputEvent(`\n=== Cargando símbolos desde: ${asmFile} ===\n`));
                 try {
                     // Convertir rutas de Windows a forward slashes para ZEsarUX
@@ -480,6 +456,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 } catch (err) {
                     this.sendEvent(new OutputEvent(`⚠ No se pudieron cargar los símbolos: ${err.message}\n\n`));
                 }
+            } else if (asmFile && fs.existsSync(asmFile) && !this._breakpointsEnabled) {
+                this.sendEvent(new OutputEvent(`⚠ No se pueden cargar símbolos: breakpoints no habilitados en ZEsarUX\n\n`));
             } else {
                 this.sendEvent(new OutputEvent(`⚠ No se encontró archivo .asm para depuración simbólica\n\n`));
             }
@@ -698,15 +676,16 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const name = md[1];
                     const hex = md[2];
                     const addrDec = parseInt(hex, 16);
-                    // If it's a BASLINE marker, store in asmLabelAddressMap keyed by line number
-                    // New format: __BASLINE_N__filename__ (e.g., __BASLINE_5__main_bas__)
-                    const mBas = name.match(/^__BASLINE_(\d+)__([A-Za-z0-9_]+)__$/i);
+                    // If it's a BAS marker, store in asmLabelAddressMap keyed by line number
+                    // Format: BAS___N___filename (e.g., BAS___5___main__bas or BAS___10___lib_functions__bas)
+                    const mBas = name.match(/^BAS___(\d+)___([A-Za-z0-9_]+)$/i);
                     if (mBas) {
                         const basNum = parseInt(mBas[1], 10);
-                        const filenamePart = mBas[2]; // e.g., "main_bas"
-                        const sourceFileName = filenamePart.replace(/_/g, '.'); // Convert back: "main.bas"
+                        const filenamePart = mBas[2]; // e.g., "main__bas" or "lib_functions__bas"
+                        // Decodificar: primero __ → . (puntos), luego _ → / (separadores de ruta)
+                        const sourceFileName = filenamePart.replace(/__/g, '.').replace(/_/g, '/'); // Convert back: "main.bas" or "lib/functions.bas"
                         this._asmLabelAddressMap[basNum] = { addr: addrDec, sourceFile: sourceFileName };
-                        this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BASLINE_${basNum} from ${sourceFileName} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
+                        this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BAS marker ${basNum} from ${sourceFileName} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
                     } else {
                         // store other symbol labels
                         this._asmSymbolAddressMap[name] = addrDec;
@@ -876,17 +855,18 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         } else {
             this.sendEvent(new OutputEvent(`[Debug][WARNING] ⚠ No zxbasm Declaring addresses found! Falling back to heuristic mapping.\n`, 'stderr'));
             
-            // Fallback heuristic: scan for __BASLINE_N__filename__: labels in ASM and find next instruction address
+            // Fallback heuristic: scan for BAS___N___filename: labels in ASM and find next instruction address
             const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
 
             for (let i = 0; i < asmLines.length; i++) {
                 const l = asmLines[i];
-                // New format: __BASLINE_N__filename__:
-                const m = l.match(/__BASLINE_(\d+)__([A-Za-z0-9_]+)__\s*:/);
+                // Format: BAS___N___filename:
+                const m = l.match(/BAS___(\d+)___([A-Za-z0-9_]+)\s*:/);
                 if (m) {
                     const bas = parseInt(m[1], 10);
                     const filenamePart = m[2];
-                    const extractedSourceFile = filenamePart.replace(/_/g, '.');
+                    // Decodificar: primero __ → . (puntos), luego _ → / (separadores de ruta)
+                    const extractedSourceFile = filenamePart.replace(/__/g, '.').replace(/_/g, '/');
                     // Buscar la primera línea ASM válida después de la etiqueta
                     let j = i + 1;
                     let foundAddr = null;
@@ -971,6 +951,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             } catch (e) {}
                         }
                     }
+                    // Log del mapeo construido
+                    this.sendEvent(new OutputEvent(`[Debug] ✓ Mapeo reverso construido con ${Object.keys(this._addrToBasLine).length} direcciones
+`));
+                    if (Object.keys(this._addrToBasLine).length > 0) {
+                        const sample = Object.entries(this._addrToBasLine).slice(0, 5);
+                        this.sendEvent(new OutputEvent(`[Debug] Ejemplo de mapeo: ${JSON.stringify(sample)}
+`));
+                    }
                     this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseExtended).length} entries:\n`));
                     for (const [k, v] of Object.entries(reverseExtended)) {
                         this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${JSON.stringify(v)}\n`));
@@ -1052,60 +1040,109 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     /**
-     * Post-process ASM file to inject explicit comment markers '; __BASLINE:N__' after
-     * #line directives that reference the preprocessed file. This makes markers visible
-     * in the final ASM even if labels/nops were moved/optimized.
+     * Busca recursivamente todos los archivos .bas en el workspace,
+     * excluyendo la carpeta .debug
      */
-    async _injectAsmMarkers(asmFile, preprocessedFile) {
-        try {
-            if (!fs.existsSync(asmFile)) return;
-            if (!fs.existsSync(preprocessedFile)) return;
-
-            const asmContent = fs.readFileSync(asmFile, 'utf8').split('\n');
-            const preContent = fs.readFileSync(preprocessedFile, 'utf8').split('\n');
-
-            // Build preprocessedMap: preLine -> basLine from labels __BASLINE_N__:
-            const preprocessedMap = {};
-            for (let i = 0; i < preContent.length; i++) {
-                const l = preContent[i];
-                const mm = l.match(/__BASLINE_(\d+)__:/);
-                if (mm) preprocessedMap[i + 1] = parseInt(mm[1], 10);
-            }
-
-            const preBase = path.basename(preprocessedFile);
-            const outLines = [];
-            for (let i = 0; i < asmContent.length; i++) {
-                const line = asmContent[i];
-                outLines.push(line);
-                const m = line.match(/^#line\s+(\d+)\s+"([^"]+)"/);
-                if (m) {
-                    const pLine = parseInt(m[1], 10);
-                    const pFile = m[2];
-                    if (path.basename(pFile) === preBase || pFile === preprocessedFile) {
-                        // Find nearest basLine at or before pLine
-                        let basLine = preprocessedMap[pLine] || null;
-                        if (!basLine) {
-                            for (let d = 0; d <= 20 && !basLine; d++) {
-                                const cand = pLine - d;
-                                if (cand > 0 && preprocessedMap[cand]) { basLine = preprocessedMap[cand]; break; }
-                            }
-                        }
-                        if (basLine) {
-                            outLines.push(`; __BASLINE:${basLine}__`);
-                        }
+    _findAllBasFiles(workspaceDir, debugDir) {
+        const basFiles = [];
+        const debugDirNormalized = path.normalize(debugDir);
+        
+        const searchDir = (dir) => {
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                
+                for (const entry of entries) {
+                    const fullPath = path.join(dir, entry.name);
+                    const normalizedPath = path.normalize(fullPath);
+                    
+                    // Saltar la carpeta .debug
+                    if (normalizedPath.startsWith(debugDirNormalized)) {
+                        continue;
+                    }
+                    
+                    if (entry.isDirectory()) {
+                        // Recursión en subcarpetas
+                        searchDir(fullPath);
+                    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.bas')) {
+                        basFiles.push(fullPath);
                     }
                 }
+            } catch (err) {
+                // Ignorar errores de permisos, etc.
             }
+        };
+        
+        searchDir(workspaceDir);
+        return basFiles;
+    }
 
-            fs.writeFileSync(asmFile, outLines.join('\n'), 'utf8');
-            this.sendEvent(new OutputEvent(`[Debug] Inyectados marcadores en ASM desde ${preprocessedFile}\n`));
-        } catch (e) {
-            throw e;
+    /**
+     * Pre-procesa un archivo .bas individual, añadiendo marcadores __BASLINE
+     * y guardándolo en .debug manteniendo la estructura de carpetas
+     */
+    _preprocessBasFile(basFile, workspaceDir, debugDir) {
+        try {
+            // Calcular la ruta relativa desde workspaceDir
+            const relativePath = path.relative(workspaceDir, basFile);
+            
+            // Construir la ruta de destino en .debug
+            const targetFile = path.join(debugDir, relativePath);
+            const targetDir = path.dirname(targetFile);
+            
+            // Crear la estructura de carpetas si no existe
+            if (!fs.existsSync(targetDir)) {
+                fs.mkdirSync(targetDir, { recursive: true });
+            }
+            
+            // Leer el contenido del archivo original
+            const sourceContent = fs.readFileSync(basFile, 'utf8');
+            const sourceLines = sourceContent.split('\n');
+            const preprocessedLines = [];
+            
+            // Tokens que representan sentencias de control de flujo
+            const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM','SUB','FUNCTION']);
+            
+            // Generar nombre de archivo para las etiquetas usando la ruta relativa completa
+            // Formato: BAS___lineNumber___filename donde:
+            // - Separadores de ruta (/ o \) → _ (1 guión bajo)
+            // - Puntos (.) → __ (2 guiones bajos)
+            // Ejemplo: lib/functions.bas → lib_functions__bas
+            const fileLabel = relativePath.replace(/[\\\/]/g, '_').replace(/\./g, '__');
+            
+            sourceLines.forEach((line, index) => {
+                const originalLineNumber = index + 1;
+                const trimmedLine = line.trim();
+                
+                // Solo añadir marcadores para líneas de código real
+                const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
+                if (trimmedLine && 
+                    !trimmedLine.startsWith("'") && 
+                    !trimmedLine.toUpperCase().startsWith('REM') && 
+                    !trimmedLine.startsWith('#') && 
+                    !FLOW_TOKENS.has(firstToken)) {
+                    
+                    // Añadir marcador ANTES de la línea de código
+                    // Formato: BAS___lineNumber___filename
+                    preprocessedLines.push(`ASM`);
+                    preprocessedLines.push(`BAS___${originalLineNumber}___${fileLabel}:`);
+                    preprocessedLines.push(`END ASM`);
+                }
+                
+                // Añadir la línea original
+                preprocessedLines.push(line);
+            });
+            
+            // Guardar el archivo preprocesado
+            fs.writeFileSync(targetFile, preprocessedLines.join('\n'), 'utf8');
+            this.sendEvent(new OutputEvent(`[Debug]   ✓ ${relativePath}\n`));
+            
+        } catch (err) {
+            this.sendEvent(new OutputEvent(`[Debug]   ⚠ Error procesando ${path.basename(basFile)}: ${err.message}\n`, 'stderr'));
         }
     }
 
     /**
-     * Genera el linemap parseando los marcadores __BASLINE:N__ desde el ASM generado
+     * Genera el linemap parseando los marcadores BAS___N___filename desde el ASM generado
      * Guarda en this._lineMap = { "1": [34, 35, 36], "2": [37, 38] }
      */
     _generateLineMapFromAsm(asmFile) {
@@ -1118,7 +1155,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
             // Strategy:
             // 1) Build a map from preprocessed.bas line -> original Boriel line by scanning the preprocessed file
-            //    (we inserted labels like __BASLINE_N__: before each Boriel source line)
+            //    (we inserted labels like BAS___N___filename: before each Boriel source line)
             // 2) Parse the generated ASM for '#line <n> "<preprocessedFile>"' directives that tell which
             //    preprocessed line the following ASM comes from. Use that to map ASM lines -> preprocessed lines
             // 3) Use preprocessedLine -> basLine map to produce final this._lineMap (basLine -> [asmLines])
@@ -1131,9 +1168,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this._reverseLineMap = {};
 
             // Primary strategy: search STRICT for the exact markers we inserted in the preprocessed BAS
-            // We accept two forms in the final ASM:
-            //  - a label:    __BASLINE_123__:
-            //  - a comment:  ; __BASLINE:123__
+            // We accept label form in the final ASM:
+            //  - a label:    BAS___123___filename:
             // When we see such a marker, we set currentBasLine and map subsequent ASM instructions
             // to that Boriel line until another marker appears.
             let currentBasLine = null;
@@ -1142,17 +1178,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const asmLineNumber = i + 1;
 
                 // Detect label form
-                const mLabel = line.match(/__BASLINE_(\d+)__\s*:/);
+                const mLabel = line.match(/BAS___(\d+)___/);
                 if (mLabel) {
                     currentBasLine = parseInt(mLabel[1], 10);
                     // label line itself is not mapped to instructions; continue
-                    continue;
-                }
-
-                // Detect comment marker form
-                const mComment = line.match(/;\s*__BASLINE:(\d+)__/);
-                if (mComment) {
-                    currentBasLine = parseInt(mComment[1], 10);
                     continue;
                 }
 
@@ -1169,7 +1198,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // to the previous #line-based heuristic to salvage mappings.
             const mappedCount = this._reverseLineMap ? Object.keys(this._reverseLineMap).length : 0;
             if (mappedCount === 0) {
-                this.sendEvent(new OutputEvent(`[Debug] No se encontraron marcadores directos __BASLINE en ASM; usando fallback #line heuristic\n`));
+                this.sendEvent(new OutputEvent(`[Debug] No se encontraron marcadores directos BAS en ASM; usando fallback #line heuristic\n`));
 
                 // First, try to detect preprocessed file referenced in the ASM via #line directives
                 // It should be in .debug/ folder now
@@ -1182,7 +1211,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 if (!detectedPreprocessedPath) {
                     const asmDir = path.dirname(asmFile);
                     const asmBase = path.basename(asmFile, '.asm');
-                    detectedPreprocessedPath = path.join(asmDir, asmBase + '.preprocessed.bas');
+                    detectedPreprocessedPath = path.join(asmDir, asmBase + '.bas');
                 }
 
                 // Build preprocessedLine -> basLine map
@@ -1192,7 +1221,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const preContent = fs.readFileSync(detectedPreprocessedPath, 'utf8').split('\n');
                         for (let i = 0; i < preContent.length; i++) {
                             const l = preContent[i];
-                            const mm = l.match(/__BASLINE_(\d+)__:/);
+                            const mm = l.match(/BAS___(\d+)___/);
                             if (mm) {
                                 const bas = parseInt(mm[1], 10);
                                 preprocessedMap[i + 1] = bas; // preprocessed line numbers are 1-based
@@ -1382,9 +1411,21 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             const dataListener = (data) => {
                 try {
                     const txt = data.toString();
+                    this.sendEvent(new OutputEvent(`< ${txt}`, 'console'));
                     if (!resolved) {
                         resolved = true;
                         this._debugSocket.removeListener('data', dataListener);
+                        
+                        // Actualizar PC si la respuesta contiene información de registros
+                        const pcMatch = txt.match(/PC=([0-9A-Fa-f]{1,4})/);
+                        if (pcMatch) {
+                            const pc = parseInt(pcMatch[1], 16);
+                            if (pc !== this._lastPC) {
+                                this._previousPC = this._lastPC;
+                                this._lastPC = pc;
+                            }
+                        }
+                        
                         resolve(txt);
                     }
                 } catch (e) {
@@ -1725,10 +1766,20 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     this._debugSocket.destroy();
                     reject(new Error('Timeout al conectar'));
                 }
-            }, 2000);
+            }, 3000);
 
+            // Listener permanente para parsear PC de todas las respuestas
             this._debugSocket.on('data', (data) => {
-                this._handleSocketData(data);
+                const txt = data.toString();
+                // Extraer PC si está presente en la respuesta
+                const pcMatch = txt.match(/PC=([0-9A-Fa-f]{1,4})/);
+                if (pcMatch) {
+                    const pc = parseInt(pcMatch[1], 16);
+                    if (pc !== this._lastPC) {
+                        this._previousPC = this._lastPC;
+                        this._lastPC = pc;
+                    }
+                }
             });
 
             this._debugSocket.on('error', (err) => {
@@ -1745,9 +1796,27 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 }
             });
 
-            this._debugSocket.connect(port, 'localhost', () => {
+            this._debugSocket.connect(port, 'localhost', async () => {
                 clearTimeout(timeout);
                 connected = true;
+                this.sendEvent(new OutputEvent('[Debug] Socket conectado\n'));
+                
+                // Leer y descartar mensaje de bienvenida
+                const welcomePromise = new Promise((res) => {
+                    const welcomeListener = (data) => {
+                        this.sendEvent(new OutputEvent(`< ${data.toString()}`, 'console'));
+                        this._debugSocket.removeListener('data', welcomeListener);
+                        res();
+                    };
+                    this._debugSocket.on('data', welcomeListener);
+                });
+                
+                await Promise.race([
+                    welcomePromise,
+                    new Promise(r => setTimeout(r, 1000)) // timeout si no llega bienvenida
+                ]);
+                
+                this.sendEvent(new OutputEvent('[Debug] Listo para enviar comandos\n'));
                 resolve();
             });
         });
@@ -1784,21 +1853,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async _ensureBreakpointsEnabled() {
         if (this._breakpointsEnabled) return;
         if (!this._debugSocket || this._debugSocket.destroyed) return;
-        try {
-            const resp = await this._sendCommandAndWait('enable-breakpoints');
-            const lower = String(resp || '').toLowerCase();
-            // Algunas versiones devuelven 'Error. Already enabled' cuando ya estaban activados: considerarlo éxito
-            if (lower.includes('unknown command')) {
-                this._breakpointsEnabled = false;
-                this.sendEvent(new OutputEvent(`⚠ enable-breakpoints no soportado por el emulador: respuesta='${resp.replace(/\n/g,' ')}'\\n`));
-            } else {
-                this._breakpointsEnabled = true;
-                this.sendEvent(new OutputEvent(`✓ enable-breakpoints soportado y activado en el emulador (resp: ${resp.replace(/\n/g,' ')})\\n`));
-            }
-        } catch (e) {
-            this._breakpointsEnabled = false;
-            this.sendEvent(new OutputEvent(`⚠ enable-breakpoints no soportado por el emulador: ${e.message}\n`));
-        }
+        
+        // Simplemente enviar el comando y asumir éxito
+        this.sendEvent(new OutputEvent(`> enable-breakpoints\n`, 'console'));
+        this._debugSocket.write('enable-breakpoints\n');
+        
+        // Dar tiempo a que ZEsarUX procese el comando
+        await new Promise(r => setTimeout(r, 200));
+        
+        // Asumir que funcionó (si no funciona, load-source-code fallará)
+        this._breakpointsEnabled = true;
+        this.sendEvent(new OutputEvent(`✓ Comando enable-breakpoints enviado\n`));
     }
 
     /**
@@ -2490,12 +2555,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             try { await this._sendCommandAndWait('enter-cpu-step'); } catch (e) { /* ignore */ }
 
             // Repeatedly perform cpu-step and watch PC until we hit an address that maps to a Boriel line
-            const maxSteps = 2000; // safety limit to avoid infinite loops
+            const maxSteps = 50; // Límite de seguridad reducido para evitar ejecución completa accidental
             let steps = 0;
             let foundBasLine = null;
+            
+            this.sendEvent(new OutputEvent(`[Debug] Iniciando step-over, mapeadas ${Object.keys(this._addrToBasLine).length} direcciones
+`));
 
             while (steps < maxSteps) {
-                // Ask emulator to step one instruction and read PC via cpu-step (we rely on socket data handler to update this._lastPC)
+                // Perform cpu-step-over and watch PC until we hit a mapped address
                 try {
                     await this._sendCommandAndWait('cpu-step-over');
                 } catch (e) {
@@ -2507,9 +2575,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 await this._waitForZesarux(20);
 
                 const pc = this._lastPC;
+                // Mostrar información detallada de los primeros pasos
+                if (steps < 10 || steps % 10 === 0) {
+                    const mapped = pc && this._addrToBasLine[pc];
+                    this.sendEvent(new OutputEvent(`[Debug] Step ${steps}: PC=0x${pc ? pc.toString(16).toUpperCase() : 'null'} (decimal ${pc}), mapeado=${mapped ? `SÍ->línea ${this._addrToBasLine[pc]}` : 'NO'}\n`));
+                }
                 if (pc && this._addrToBasLine[pc]) {
                     foundBasLine = this._addrToBasLine[pc];
-                    this.sendEvent(new OutputEvent(`[Debug] Step Over: reached PC=0x${pc.toString(16).toUpperCase()} which maps to Boriel line ${foundBasLine}\n`));
+                    this.sendEvent(new OutputEvent(`[Debug] ✓ Step Over: reached PC=0x${pc.toString(16).toUpperCase()} which maps to Boriel line ${foundBasLine}\n`));
                     break;
                 }
 
@@ -2658,10 +2731,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             } catch (e) {}
 
             let found = null;
-            // Prefer exact main.bas (avoid selecting preprocessed files)
+            // Prefer exact main.bas (avoid selecting files from .debug folder)
             for (const c of candidates) {
                 if (!c) continue;
-                if (c.toLowerCase().endsWith('.preprocessed.bas')) continue;
+                if (c.includes(path.sep + '.debug' + path.sep)) continue;
                 if (fs.existsSync(c)) { found = c; break; }
             }
 
@@ -2677,8 +2750,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             if (!f.toLowerCase().endsWith('.bas')) continue;
                             const full = path.join(pdir, f);
                             if (f.toLowerCase() === `${tapBase}.bas`) { found = full; break; }
-                            if (f.toLowerCase().endsWith('.preprocessed.bas')) continue;
-                            if (!found) found = full; // keep first non-preprocessed as fallback
+                            if (full.includes(path.sep + '.debug' + path.sep)) continue;
+                            if (!found) found = full; // keep first non-.debug file as fallback
                         }
                     }
                 } catch (e) { /* ignore */ }
