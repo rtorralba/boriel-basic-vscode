@@ -2,14 +2,136 @@
     "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
     "name": "borielbasic",
     "patterns": [
-        {
-            "include": "#directive_strings"
-        },
-        {
-            "include": "#strings"
-        }
+        { "include": "#comments" },
+        { "include": "#preprocessor" },
+        { "include": "#asm_block" },
+        { "include": "#function_declaration" },
+        { "include": "#keywords_control" },
+        { "include": "#keywords_declaration" },
+        { "include": "#keywords_io" },
+        { "include": "#types" },
+        { "include": "#constants" },
+        { "include": "#functions_builtin" },
+        { "include": "#function_call" },
+        { "include": "#numbers" },
+        { "include": "#strings" },
+        { "include": "#directive_strings" }
     ],
     "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.apostrophe.borielbasic",
+                    "match": "'.*$"
+                },
+                {
+                    "name": "comment.line.rem.borielbasic",
+                    "match": "(?i)\\bREM\\b.*$"
+                }
+            ]
+        },
+        "preprocessor": {
+            "name": "keyword.control.preprocessor.borielbasic",
+            "match": "(?i)^\\s*(#define|#undef|#include|#ifdef|#ifndef|#endif|#else|#elseif|#pragma|#require|#once)\\b"
+        },
+        "asm_block": {
+            "name": "meta.asm.borielbasic",
+            "begin": "(?i)\\bASM\\b",
+            "end": "(?i)\\bEND\\s+ASM\\b",
+            "beginCaptures": { "0": { "name": "keyword.other.asm.borielbasic" } },
+            "endCaptures": { "0": { "name": "keyword.other.asm.borielbasic" } },
+            "contentName": "source.asm"
+        },
+        "function_declaration": {
+            "comment": "SUB/FUNCTION [FASTCALL] Name(params) AS Type",
+            "match": "(?i)\\b(SUB|FUNCTION)\\s+(FASTCALL\\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\([^)]*\\))?(?:\\s+AS\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\b",
+            "captures": {
+                "1": { "name": "keyword.other.declaration.borielbasic" },
+                "2": { "name": "keyword.other.declaration.borielbasic" },
+                "3": { "name": "entity.name.function.borielbasic" },
+                "4": { "patterns": [{ "include": "#parameter_list" }] },
+                "5": { "name": "support.type.primitive.borielbasic" }
+            }
+        },
+        "parameter_list": {
+            "patterns": [
+                {
+                    "comment": "BYVAL/BYREF qualifier",
+                    "match": "(?i)\\b(BYVAL|BYREF)\\b",
+                    "captures": {
+                        "1": { "name": "keyword.other.declaration.borielbasic" }
+                    }
+                },
+                {
+                    "comment": "AS keyword + type name — must be before param-name rule",
+                    "match": "(?i)\\b(AS)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+                    "captures": {
+                        "1": { "name": "keyword.other.declaration.borielbasic" },
+                        "2": { "name": "support.type.primitive.borielbasic" }
+                    }
+                },
+                {
+                    "comment": "param name before AS",
+                    "match": "(?i)\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s+(?=AS\\b)",
+                    "captures": {
+                        "1": { "name": "variable.parameter.borielbasic" }
+                    }
+                },
+                {
+                    "comment": "plain param name without type annotation",
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+                    "captures": {
+                        "1": { "name": "variable.parameter.borielbasic" }
+                    }
+                }
+            ]
+        },
+        "function_call": {
+            "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+            "captures": {
+                "1": { "name": "entity.name.function.borielbasic" }
+            }
+        },
+        "keywords_control": {
+            "name": "keyword.control.borielbasic",
+            "match": "(?i)\\b(IF|THEN|ELSE|ELSEIF|END\\s+IF|FOR|TO|STEP|NEXT|WHILE|WEND|DO|LOOP|UNTIL|RETURN|GOTO|GOSUB|EXIT|ON|SELECT|CASE|END\\s+SELECT|END\\s+SUB|END\\s+FUNCTION)\\b"
+        },
+        "keywords_declaration": {
+            "name": "keyword.other.declaration.borielbasic",
+            "match": "(?i)\\b(SUB|FUNCTION|DIM|CONST|LET|FASTCALL|BYVAL|BYREF|AS|END|DECLARE|OVERLOAD|STATIC|GLOBAL|LOCAL|PROC|ENDP)\\b"
+        },
+        "keywords_io": {
+            "name": "keyword.other.io.borielbasic",
+            "match": "(?i)\\b(PRINT|INPUT|CLS|PAUSE|POKE|OUT|BORDER|INK|PAPER|BRIGHT|FLASH|INVERSE|OVER|BEEP|PLAY|DRAW|CIRCLE|PLOT|RANDOMIZE|DATA|READ|RESTORE|STOP|NEW|RUN|CLEAR|CONTINUE)\\b"
+        },
+        "types": {
+            "name": "support.type.primitive.borielbasic",
+            "match": "(?i)\\b(BYTE|UBYTE|INTEGER|UINTEGER|LONG|ULONG|FLOAT|FIXED|STRING|BOOLEAN|VOID|BIT)\\b"
+        },
+        "constants": {
+            "name": "constant.language.borielbasic",
+            "match": "(?i)\\b(TRUE|FALSE|NULL|PI)\\b"
+        },
+        "functions_builtin": {
+            "name": "support.function.borielbasic",
+            "match": "(?i)\\b(ABS|SGN|SQR|SIN|COS|TAN|ASN|ACS|ATN|INT|FIX|CEIL|LN|LOG|EXP|LEN|CODE|VAL|STR\\$|CHR\\$|ASC|INSTR|LCASE\\$|UCASE\\$|LTRIM\\$|RTRIM\\$|MID\\$|LEFT\\$|RIGHT\\$|RND|INKEY\\$|USR|CAST|PEEK|IN|BAND|BOR|BXOR|BNOT)\\b"
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.hex.borielbasic",
+                    "match": "\\b(0x[0-9A-Fa-f]+|\\$[0-9A-Fa-f]+)\\b"
+                },
+                {
+                    "name": "constant.numeric.binary.borielbasic",
+                    "match": "\\b(0b[01]+|%[01]+)\\b"
+                },
+                {
+                    "name": "constant.numeric.borielbasic",
+                    "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+                }
+            ]
+        },
         "strings": {
             "name": "string.quoted.double.borielbasic",
             "begin": "\"",

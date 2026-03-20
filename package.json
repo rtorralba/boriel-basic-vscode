@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.25",
+    "version": "1.0.26",
     "author": "Raül Torralba (Juntelart)",
     "license": "AGPL-3.0",
     "publisher": "rtorralba",
@@ -46,6 +46,14 @@
                 "language": "borielbasic",
                 "scopeName": "source.borielbasic",
                 "path": "./borielbasic.tmLanguage.json"
+            },
+            {
+                "path": "./borielbasic-markdown.tmLanguage.json",
+                "scopeName": "markdown.borielbasic.codeblock",
+                "injectTo": ["text.html.markdown"],
+                "embeddedLanguages": {
+                    "meta.embedded.block.borielbasic": "borielbasic"
+                }
             }
         ],
         "configuration": {
