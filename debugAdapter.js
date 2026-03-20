@@ -59,6 +59,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // DIM varname AS STRING → mark as string_ptr; other types kept as-is
             const stringVarNames = new Set();
             const varDeclaredType = {}; // varName (lowercase) → declared ZX Basic type
+            const arrayDimInfo = {};    // varName → { type, dimensions, elementSize, totalElements }
             const basFilesToScan = [];
             if (this._sourceFile && fs.existsSync(this._sourceFile)) {
                 basFilesToScan.push(this._sourceFile);
@@ -69,7 +70,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     if (!basFilesToScan.includes(f)) basFilesToScan.push(f);
                 }
             }
-            const dimRe = /^\s*DIM\s+(\w+)\s+AS\s+(\w+)/i;
+            const dimRe = /^\s*DIM\s+(\w+)\s*(?:\(([^)]*)\))?\s+AS\s+(\w+)/i;
             for (const basFile of basFilesToScan) {
                 try {
                     const lines = fs.readFileSync(basFile, 'utf8').split('\n');
@@ -77,9 +78,19 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const m = l.match(dimRe);
                         if (m) {
                             const vname = m[1].toLowerCase();
-                            const vtype = m[2].toLowerCase();
+                            const dimStr = m[2]; // e.g. "10" or "5, 3" or undefined
+                            const vtype = m[3].toLowerCase();
                             varDeclaredType[vname] = vtype;
                             if (vtype === 'string') stringVarNames.add(vname);
+                            if (dimStr) {
+                                const lastIndices = dimStr.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n >= 0);
+                                if (lastIndices.length > 0) {
+                                    const dims = lastIndices.map(n => n + 1); // lastIndex → size (0-based arrays)
+                                    const elSize = { byte: 1, ubyte: 1, integer: 2, uinteger: 2, long: 4, ulong: 4, fixed: 4, float: 6, string: 2 }[vtype] || 2;
+                                    const total = dims.reduce((a, b) => a * b, 1);
+                                    arrayDimInfo[vname] = { type: vtype, dimensions: dims, elementSize: elSize, totalElements: total };
+                                }
+                            }
                         }
                     }
                 } catch (e) { /* ignore */ }
@@ -149,10 +160,43 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 }
             }
 
+            // Post-process: detect arrays by finding labels containing __DATA__
+            // e.g. _sprite0.__DATA__ or _sprite0__DATA__ → marks _sprite0 as array
+            const varNameSet = new Set(this._globalVariables.map(g => g.name));
+            const toRemove = new Set();
+            for (const g of this._globalVariables) {
+                if (!g.name.includes('__DATA__')) continue;
+                toRemove.add(g.name);
+                if (!g.name.endsWith('__DATA__')) continue; // PTR companion or other, just hide
+                // Extract parent name: remove trailing __DATA__ and any separator (. or _)
+                const parentName = g.name.slice(0, -'__DATA__'.length).replace(/[._]+$/, '');
+                if (!parentName || !varNameSet.has(parentName)) continue;
+                const parent = this._globalVariables.find(v => v.name === parentName);
+                if (!parent || parent.isArray) continue;
+                parent.isArray = true;
+                parent.dataAddr = g.addr;
+                const bareName = parentName.replace(/^_+/, '').toLowerCase();
+                const dimInfo = arrayDimInfo[bareName];
+                if (dimInfo) {
+                    parent.arrayElementType = dimInfo.type;
+                    parent.arrayElementSize = dimInfo.elementSize;
+                    parent.arrayDimensions = dimInfo.dimensions;
+                    parent.arrayTotalElements = dimInfo.totalElements;
+                } else if (g.size && g.size > 0) {
+                    // Fallback: infer from data size, default to INTEGER (2 bytes)
+                    parent.arrayElementType = 'integer';
+                    parent.arrayElementSize = 2;
+                    parent.arrayTotalElements = Math.floor(g.size / 2);
+                    parent.arrayDimensions = [parent.arrayTotalElements];
+                }
+            }
+            this._globalVariables = this._globalVariables.filter(g => !toRemove.has(g.name));
+
             if (this._globalVariables.length > 0) {
                 this.sendEvent(new OutputEvent(`[Debug] Detectadas ${this._globalVariables.length} variables globales en ASM\n`));
                 for (const g of this._globalVariables) {
-                    this.sendEvent(new OutputEvent(`[Debug]   ${g.name} @ asmLine ${g.asmLine} type=${g.type} size=${g.size} addr=${g.addr ? '0x'+g.addr.toString(16).toUpperCase() : 'unknown'}\n`));
+                    const arrayInfo = g.isArray ? ` [array ${g.arrayElementType}(${(g.arrayDimensions||[]).join(',')})]` : '';
+                    this.sendEvent(new OutputEvent(`[Debug]   ${g.name} @ asmLine ${g.asmLine} type=${g.type} size=${g.size} addr=${g.addr ? '0x'+g.addr.toString(16).toUpperCase() : 'unknown'}${arrayInfo}\n`));
                 }
             }
         } catch (e) {
@@ -3142,6 +3186,58 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
         }
 
+        // Array elements scope: expand individual array elements
+        if (id && typeof id === 'object' && id.type === 'array_elements') {
+            const g = id.variable;
+            try {
+                if (g.dataAddr !== null && g.dataAddr !== undefined && g.arrayTotalElements > 0 && g.arrayElementSize) {
+                    const dataAddrNum = typeof g.dataAddr === 'number' ? g.dataAddr : parseInt(g.dataAddr, 10);
+                    const totalBytes = g.arrayTotalElements * g.arrayElementSize;
+                    const bytes = await this._readMemoryZesarux(dataAddrNum, Math.min(totalBytes, 4096));
+                    if (bytes && bytes.length > 0) {
+                        for (let i = 0; i < g.arrayTotalElements; i++) {
+                            const offset = i * g.arrayElementSize;
+                            if (offset >= bytes.length) break;
+                            let valStr;
+                            if (g.arrayElementSize === 1) {
+                                const v = bytes[offset];
+                                valStr = `${v} (0x${v.toString(16).toUpperCase().padStart(2, '0')})`;
+                            } else if (g.arrayElementSize === 2) {
+                                let v = (bytes[offset] || 0) + ((bytes[offset + 1] || 0) << 8);
+                                if (g.arrayElementType === 'integer') v = v >= 0x8000 ? v - 0x10000 : v;
+                                valStr = `${v} (0x${(v & 0xFFFF).toString(16).toUpperCase().padStart(4, '0')})`;
+                            } else {
+                                const slice = Array.from(bytes.slice(offset, offset + g.arrayElementSize));
+                                valStr = slice.map(b => b.toString(16).padStart(2, '0')).join(' ');
+                            }
+                            let indexLabel;
+                            if (g.arrayDimensions && g.arrayDimensions.length > 1) {
+                                const indices = [];
+                                let rem = i;
+                                for (let d = g.arrayDimensions.length - 1; d >= 0; d--) {
+                                    indices.unshift(rem % g.arrayDimensions[d]);
+                                    rem = Math.floor(rem / g.arrayDimensions[d]);
+                                }
+                                indexLabel = `[${indices.join(', ')}]`;
+                            } else {
+                                indexLabel = `[${i}]`; // 0-based
+                            }
+                            variables.push({ name: indexLabel, value: valStr, variablesReference: 0 });
+                        }
+                    } else {
+                        variables.push({ name: '(empty)', value: 'no data read', variablesReference: 0 });
+                    }
+                } else {
+                    variables.push({ name: '(no data)', value: 'address or size unknown', variablesReference: 0 });
+                }
+            } catch (e) {
+                variables.push({ name: 'error', value: e.message, variablesReference: 0 });
+            }
+            response.body = { variables };
+            this.sendResponse(response);
+            return;
+        }
+
         // Globals scope: return parsed global variable descriptors (name, type, address)
         if (id === "globals") {
             try {
@@ -3152,6 +3248,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const displayName = g.name.replace(/^_+/, '');
                         try {
                             let display = `${g.type}`;
+                            // Array variable: show type(dimensions) and allow element expansion
+                            if (g.isArray) {
+                                const dimLabel = g.arrayDimensions ? g.arrayDimensions.join(', ') : '?';
+                                const typeLabel = g.arrayElementType || g.type || 'array';
+                                display = `${typeLabel}(${dimLabel})`;
+                                const ref = this._variableHandles.create({ type: 'array_elements', variable: g });
+                                variables.push({ name: displayName, value: display, variablesReference: ref });
+                                continue;
+                            }
                             if (g.addr) {
                                 const addrNum = parseInt(g.addr, 10);
                                 const hexAddr = addrNum.toString(16).toUpperCase().padStart(4, '0');
