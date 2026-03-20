@@ -878,6 +878,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const reverseExtended = {};
                     // Also build runtime map addrDecimal -> basLine
                     this._addrToBasLine = {};
+                    // Full map: addrDecimal -> { file: absPath, line: number }
+                    this._addrToFileAndLine = {};
                     for (const k of basKeys) {
                         const addr = this._basLineToAddress[k];
                         if (addr !== undefined && addr !== null) {
@@ -910,16 +912,41 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             };
                             try {
                                 this._addrToBasLine[parseInt(addr,10)] = borielLineNum;
+                                if (lineSourceFile) {
+                                    this._addrToFileAndLine[parseInt(addr,10)] = { file: lineSourceFile, line: borielLineNum };
+                                }
                             } catch (e) {}
                         }
                     }
                     // Log del mapeo construido
-                    this.sendEvent(new OutputEvent(`[Debug] ✓ Mapeo reverso construido con ${Object.keys(this._addrToBasLine).length} direcciones
-`));
+                    this.sendEvent(new OutputEvent(`[Debug] ✓ Mapeo reverso construido con ${Object.keys(this._addrToBasLine).length} direcciones\n`));
+
+                    // Supplement _addrToFileAndLine from _fileAddrMap so that lines from
+                    // included files (e.g. lib/functions.bas) are also reachable by step loops.
+                    // _basLineToAddress only keeps one entry per line-number (main file wins),
+                    // so functions.bas lines that share numbers with main.bas are missing above.
+                    if (this._fileAddrMap) {
+                        let added = 0;
+                        for (const [absFile, lineMap] of Object.entries(this._fileAddrMap)) {
+                            for (const [lineStr, addr] of Object.entries(lineMap)) {
+                                const addrNum = parseInt(addr, 10);
+                                if (!this._addrToFileAndLine[addrNum]) {
+                                    this._addrToFileAndLine[addrNum] = { file: absFile, line: parseInt(lineStr, 10) };
+                                    added++;
+                                }
+                                if (!this._addrToBasLine[addrNum]) {
+                                    this._addrToBasLine[addrNum] = parseInt(lineStr, 10);
+                                }
+                            }
+                        }
+                        if (added > 0) {
+                            this.sendEvent(new OutputEvent(`[Debug] ✓ _addrToFileAndLine ampliado con ${added} entradas de archivos incluidos\n`));
+                        }
+                    }
+
                     if (Object.keys(this._addrToBasLine).length > 0) {
                         const sample = Object.entries(this._addrToBasLine).slice(0, 5);
-                        this.sendEvent(new OutputEvent(`[Debug] Ejemplo de mapeo: ${JSON.stringify(sample)}
-`));
+                        this.sendEvent(new OutputEvent(`[Debug] Ejemplo de mapeo: ${JSON.stringify(sample)}\n`));
                     }
                     this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseExtended).length} entries:\n`));
                     for (const [k, v] of Object.entries(reverseExtended)) {
@@ -2124,15 +2151,22 @@ class BorielBasicDebugSession extends LoggingDebugSession {
      * Devuelve { file: absPath, line: number } o null si no hay mapeo.
      */
     _pcToFileAndLine(pc) {
-        if (!this._fileAddrMap) return null;
-        for (const [absFile, lineMap] of Object.entries(this._fileAddrMap)) {
-            for (const [lineStr, addr] of Object.entries(lineMap)) {
-                if (parseInt(addr, 10) === pc) {
-                    return { file: absFile, line: parseInt(lineStr, 10) };
+        if (!pc) return null;
+        // Primary: _addrToFileAndLine built from reverseExtended (has correct sourceFile per entry)
+        if (this._addrToFileAndLine && this._addrToFileAndLine[pc]) {
+            return this._addrToFileAndLine[pc];
+        }
+        // Secondary: _fileAddrMap (built from zxbasm Declaring lines)
+        if (this._fileAddrMap) {
+            for (const [absFile, lineMap] of Object.entries(this._fileAddrMap)) {
+                for (const [lineStr, addr] of Object.entries(lineMap)) {
+                    if (parseInt(addr, 10) === pc) {
+                        return { file: absFile, line: parseInt(lineStr, 10) };
+                    }
                 }
             }
         }
-        // Fallback: buscar en _basLineToAddress (solo main file)
+        // Fallback: _basLineToAddress with main source file
         if (this._basLineToAddress) {
             for (const [lineStr, addr] of Object.entries(this._basLineToAddress)) {
                 if (parseInt(addr, 10) === pc) {
@@ -2847,9 +2881,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const mapped = pc && this._addrToBasLine[pc];
                     this.sendEvent(new OutputEvent(`[Debug] Step ${steps}: PC=0x${pc ? pc.toString(16).toUpperCase() : 'null'} (decimal ${pc}), mapeado=${mapped ? `SÍ->línea ${this._addrToBasLine[pc]}` : 'NO'}\n`));
                 }
-                if (pc && this._addrToBasLine[pc]) {
+                if (pc && this._addrToFileAndLine && this._addrToFileAndLine[pc]) {
+                    const info = this._addrToFileAndLine[pc];
+                    foundBasLine = info.line;
+                    this._lastSourceFile = info.file;
+                    this.sendEvent(new OutputEvent(`[Debug] ✓ Step Over: PC=0x${pc.toString(16).toUpperCase()} -> ${path.basename(info.file)}:${foundBasLine}\n`));
+                    break;
+                } else if (pc && this._addrToBasLine[pc]) {
                     foundBasLine = this._addrToBasLine[pc];
-                    this.sendEvent(new OutputEvent(`[Debug] ✓ Step Over: reached PC=0x${pc.toString(16).toUpperCase()} which maps to Boriel line ${foundBasLine}\n`));
+                    this.sendEvent(new OutputEvent(`[Debug] ✓ Step Over: PC=0x${pc.toString(16).toUpperCase()} -> line ${foundBasLine}\n`));
                     break;
                 }
 
@@ -2858,6 +2898,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             if (foundBasLine) {
                 this._lastBasLine = foundBasLine;
+                // _lastSourceFile already set inside the loop when _addrToFileAndLine matched
 
                 // (Do not auto-run when we reach the last Boriel line here; leave it stopped.)
 
@@ -2925,9 +2966,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 await this._waitForZesarux(20);
 
                 const pc = this._lastPC;
-                if (pc && this._addrToBasLine[pc]) {
+                if (pc && this._addrToFileAndLine && this._addrToFileAndLine[pc]) {
+                    const info = this._addrToFileAndLine[pc];
+                    foundBasLine = info.line;
+                    this._lastSourceFile = info.file;
+                    this.sendEvent(new OutputEvent(`[Debug] Step Into: PC=0x${pc.toString(16).toUpperCase()} -> ${path.basename(info.file)}:${foundBasLine}\n`));
+                    break;
+                } else if (pc && this._addrToBasLine[pc]) {
                     foundBasLine = this._addrToBasLine[pc];
-                    this.sendEvent(new OutputEvent(`[Debug] Step Into: reached PC=0x${pc.toString(16).toUpperCase()} which maps to Boriel line ${foundBasLine}\n`));
+                    this.sendEvent(new OutputEvent(`[Debug] Step Into: PC=0x${pc.toString(16).toUpperCase()} -> line ${foundBasLine}\n`));
                     break;
                 }
 
@@ -2936,6 +2983,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             if (foundBasLine) {
                 this._lastBasLine = foundBasLine;
+                // _lastSourceFile already set inside the loop when _addrToFileAndLine matched
                 this._stopped = true;
                 this.sendResponse(response);
                 this.sendEvent(new StoppedEvent('step', 1));
