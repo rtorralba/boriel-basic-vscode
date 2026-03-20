@@ -1,6 +1,10 @@
+#include "lib/functions.bas"
+
 Print "Hello, World!"
 Print "Hello, Pepe!"
 Print "Hello, Luis!"
+
+greetings()
 
 Dim score As Ubyte
 score = 85

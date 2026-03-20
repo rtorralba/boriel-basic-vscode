@@ -39,6 +39,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._previousPC = null; // PC anterior (para detectar isEndOfSub en ambas posiciones)
         this._lastAsmLine = null; // última línea ASM conocida para PC
         this._lastBasLine = null; // última línea Boriel conocida para PC
+        this._lastSourceFile = null; // archivo fuente donde paró el breakpoint
         this._sourceFile = null; // Archivo fuente .bas
         this.setDebuggerLinesStartAt1(true);
         this.setDebuggerColumnsStartAt1(true);
@@ -500,8 +501,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         entryAddr = this._basLineToAddress[entryBasLine];
                         this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada (primer breakpoint usuario, Boriel ${entryBasLine}): 0x${entryAddr.toString(16).toUpperCase()}\n`));
                     } else {
-                        // Use the address of the first Boriel line as entry point
-                        if (this._basLineToAddress && this._basLineToAddress[1]) {
+                        // Use the address of the first Boriel line as entry point — prefer main source file
+                        const mainSrc = this._sourceFile;
+                        if (this._fileAddrMap && mainSrc && this._fileAddrMap[mainSrc] && this._fileAddrMap[mainSrc][1]) {
+                            entryAddr = this._fileAddrMap[mainSrc][1];
+                            this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada (BASLINE_1 de ${path.basename(mainSrc)}): 0x${entryAddr.toString(16).toUpperCase()}\n`));
+                        } else if (this._basLineToAddress && this._basLineToAddress[1]) {
                             entryAddr = this._basLineToAddress[1];
                             this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada (BASLINE_1): 0x${entryAddr.toString(16).toUpperCase()}\n`));
                         } else if (this._asmLineToAddress && Object.keys(this._asmLineToAddress).length > 0) {
@@ -620,7 +625,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const filenamePart = mBas[2]; // e.g., "main__bas" or "lib_functions__bas"
                         // Decodificar: primero __ → . (puntos), luego _ → / (separadores de ruta)
                         const sourceFileName = filenamePart.replace(/__/g, '.').replace(/_/g, '/'); // Convert back: "main.bas" or "lib/functions.bas"
-                        this._asmLabelAddressMap[basNum] = { addr: addrDec, sourceFile: sourceFileName };
+                        // Use compound key "lineNum:filenamePart" to avoid collisions between files with same line numbers
+                        const labelKey = `${basNum}:${filenamePart}`;
+                        this._asmLabelAddressMap[labelKey] = { addr: addrDec, sourceFile: sourceFileName, basNum };
                         this.sendEvent(new OutputEvent(`[Debug][zxbasm] ✓ Found BAS marker ${basNum} from ${sourceFileName} at address 0x${hex.toUpperCase()} (decimal ${addrDec})\n`));
                     } else {
                         // store other symbol labels
@@ -770,20 +777,39 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             await this._buildAsmAddressMap(asmFile);
         }
 
+        // Build per-file address map: absoluteSourcePath -> { lineNum -> addr }
+        // This avoids collisions when multiple source files share the same line numbers.
+        this._fileAddrMap = {};
+
         // If zxbasm produced explicit Declaring lines for __BASLINE_N__, prefer those
         // as the authoritative addresses (they reflect the assembler/runtime mapping).
         if (this._asmLabelAddressMap && Object.keys(this._asmLabelAddressMap).length > 0) {
             this.sendEvent(new OutputEvent(`[Debug] ✓ Using ${Object.keys(this._asmLabelAddressMap).length} addresses from zxbasm Declaring lines\n`));
             for (const [k, v] of Object.entries(this._asmLabelAddressMap)) {
-                const bas = parseInt(k, 10);
-                // v is now { addr, sourceFile }
+                // Key format is now "lineNum:filenamePart"
+                const colonIdx = k.indexOf(':');
+                const bas = parseInt(colonIdx >= 0 ? k.substring(0, colonIdx) : k, 10);
+                // v is now { addr, sourceFile, basNum }
                 const addrNum = typeof v === 'object' ? v.addr : parseInt(v, 10);
                 const extractedSourceFile = typeof v === 'object' ? v.sourceFile : null;
                 if (!isNaN(bas) && !isNaN(addrNum)) {
-                    this._basLineToAddress[bas] = addrNum;
-                    // Store sourceFile info for later use in linemap
-                    if (!this._basLineToSourceFile) this._basLineToSourceFile = {};
-                    if (extractedSourceFile) this._basLineToSourceFile[bas] = extractedSourceFile;
+                    // Derive absolute source path for file-aware map
+                    const mainSourceFile = this._sourceFile || null;
+                    const absSourceFile = extractedSourceFile
+                        ? path.join(path.dirname(mainSourceFile || ''), extractedSourceFile)
+                        : (mainSourceFile || null);
+                    // Build per-file map
+                    if (absSourceFile) {
+                        if (!this._fileAddrMap[absSourceFile]) this._fileAddrMap[absSourceFile] = {};
+                        this._fileAddrMap[absSourceFile][bas] = addrNum;
+                    }
+                    // Build _basLineToAddress: MAIN source file takes priority over included files
+                    const isMainFile = absSourceFile === mainSourceFile;
+                    if (isMainFile || this._basLineToAddress[bas] === undefined) {
+                        this._basLineToAddress[bas] = addrNum;
+                        if (!this._basLineToSourceFile) this._basLineToSourceFile = {};
+                        if (extractedSourceFile) this._basLineToSourceFile[bas] = extractedSourceFile;
+                    }
                     this.sendEvent(new OutputEvent(`[Debug]   BASLINE_${bas} -> 0x${addrNum.toString(16).toUpperCase()}${extractedSourceFile ? ` (${extractedSourceFile})` : ''}\n`));
                 }
             }
@@ -1136,27 +1162,27 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             const sourceLines = sourceContent.split('\n');
             const preprocessedLines = [];
             
-            // Tokens que representan sentencias de control de flujo
+            // Tokens que representan sentencias que no generan código ejecutable propio
             const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM','SUB','FUNCTION']);
-            
+
             // Generar nombre de archivo para las etiquetas usando la ruta relativa completa
             // Formato: BAS___lineNumber___filename donde:
             // - Separadores de ruta (/ o \) → _ (1 guión bajo)
             // - Puntos (.) → __ (2 guiones bajos)
             // Ejemplo: lib/functions.bas → lib_functions__bas
             const fileLabel = relativePath.replace(/[\\\/]/g, '_').replace(/\./g, '__');
-            
+
             sourceLines.forEach((line, index) => {
                 const originalLineNumber = index + 1;
                 const trimmedLine = line.trim();
-                
-                // Solo añadir marcadores para líneas de código real
+
+                // Solo añadir marcadores para líneas de código real ejecutable.
+                // Excluir: comentarios, directivas de preprocesador (#include, #define…),
+                // sentencias de flujo/declaración y líneas vacías.
                 const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
-                if (trimmedLine && 
-                    !trimmedLine.startsWith("'") && 
-                    !trimmedLine.toUpperCase().startsWith('REM') && 
-                    !trimmedLine.startsWith('#') && 
-                    !FLOW_TOKENS.has(firstToken)) {
+                const isPreprocessor = trimmedLine.startsWith('#');
+                const isComment = trimmedLine.startsWith("'") || trimmedLine.toUpperCase().startsWith('REM ');
+                if (trimmedLine && !isComment && !isPreprocessor && !FLOW_TOKENS.has(firstToken)) {
                     
                     // Añadir marcador ANTES de la línea de código
                     // Formato: BAS___lineNumber___filename
@@ -1343,10 +1369,76 @@ class BorielBasicDebugSession extends LoggingDebugSession {
      * 2. smartload (loads program, stays in step mode)
      * 3. run (executes until breakpoint)
      */
+
+    /**
+     * Re-resuelve todos los breakpoints del usuario usando _fileAddrMap (que se construye
+     * DESPUÉS de setBreakPointsRequest). Limpia los pendientes antiguos y los reinstala
+     * con las direcciones reales del linemap.
+     * Usa normalización de rutas para evitar problemas de mayúsculas/separadores en Windows.
+     */
+    async _reResolveUserBreakpoints() {
+        if (!this._userBreakpointsByFile) {
+            this.sendEvent(new OutputEvent(`[Debug] _reResolveUserBreakpoints: sin breakpoints de usuario\n`));
+            return;
+        }
+        if (!this._fileAddrMap || Object.keys(this._fileAddrMap).length === 0) {
+            this.sendEvent(new OutputEvent(`[Debug] _reResolveUserBreakpoints: _fileAddrMap vacío\n`, 'stderr'));
+            return;
+        }
+
+        // Limpiar breakpoints pendientes con direcciones posiblemente erróneas
+        this._pendingBreakpoints = [];
+
+        // Normalizar claves de _fileAddrMap para comparación case-insensitive en Windows
+        const normMap = {};
+        for (const [k, v] of Object.entries(this._fileAddrMap)) {
+            normMap[path.normalize(k).toLowerCase()] = { absPath: k, lines: v };
+        }
+
+        this.sendEvent(new OutputEvent(`[Debug] _reResolveUserBreakpoints: ${Object.keys(this._userBreakpointsByFile).length} archivos con breakpoints, ${Object.keys(normMap).length} archivos en mapa\n`));
+        for (const k of Object.keys(normMap)) {
+            this.sendEvent(new OutputEvent(`[Debug]   fileAddrMap key: ${k}\n`));
+        }
+
+        for (const [filePath, lineSet] of Object.entries(this._userBreakpointsByFile)) {
+            const normalizedPath = path.normalize(filePath).toLowerCase();
+            const entry = normMap[normalizedPath];
+
+            this.sendEvent(new OutputEvent(`[Debug] Resolviendo breakpoints de ${path.basename(filePath)} (${Array.from(lineSet).join(',')})\n`));
+            this.sendEvent(new OutputEvent(`[Debug]   lookup key: ${normalizedPath} → ${entry ? 'ENCONTRADO' : 'NO ENCONTRADO'}\n`));
+
+            if (!entry) {
+                this.sendEvent(new OutputEvent(`[Debug] ⚠ Sin mapa de direcciones para ${path.basename(filePath)}\n`, 'stderr'));
+                continue;
+            }
+
+            for (const line of lineSet) {
+                const addr = entry.lines[line];
+                if (addr === undefined) {
+                    this.sendEvent(new OutputEvent(`[Debug] ⚠ Sin dirección para ${path.basename(filePath)}:${line}\n`, 'stderr'));
+                    continue;
+                }
+                const addrNum = parseInt(addr, 10);
+                const addrToken = `${addrNum.toString(16).toUpperCase()}h`;
+                this.sendEvent(new OutputEvent(`[Debug] ✓ Breakpoint ${path.basename(filePath)}:${line} → 0x${addrNum.toString(16).toUpperCase()}\n`));
+                try {
+                    const installed = await this._installBreakpoint(addrToken, line);
+                    if (!installed) {
+                        this.sendEvent(new OutputEvent(`[Debug] ⚠ No se pudo instalar breakpoint en ${addrToken}, encolando\n`, 'stderr'));
+                        this._pendingBreakpoints.push({ addrToken, clientLine: line });
+                    }
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] ⚠ Error instalando breakpoint ${addrToken}: ${e.message}\n`, 'stderr'));
+                    this._pendingBreakpoints.push({ addrToken, clientLine: line });
+                }
+            }
+        }
+    }
+
     async _tryPlayTapeThenRun(targetAddr) {
         if (this._tapeAutoPlayed) return;
         this._tapeAutoPlayed = true;
-        
+
         try {
             this.sendEvent(new OutputEvent(`[Debug] Preparando para cargar TAP...\n`));
             
@@ -1399,12 +1491,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`[Debug] PASO 3: Sin ASM que cargar (${asmFileForLoad || 'no definido'})\n`));
             }
 
-            // PASO 3b: Instalar breakpoints pendientes del usuario (ahora que están habilitados)
+            // PASO 3b: Re-resolver breakpoints del usuario con las direcciones reales
+            // (cuando setBreakPointsRequest llegó antes de que _fileAddrMap existiera,
+            //  los breakpoints quedaron pendientes con direcciones estimadas; ahora los
+            //  volvemos a calcular con el mapa correcto y los instalamos en ZEsarUX)
             try {
-                await this._flushPendingBreakpoints();
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoints pendientes instalados\n`));
+                await this._reResolveUserBreakpoints();
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints de usuario re-resueltos e instalados\n`));
             } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoints pendientes no instalados: ${e.message}\n`, 'stderr'));
+                this.sendEvent(new OutputEvent(`[Debug] Error resolviendo breakpoints de usuario: ${e.message}\n`, 'stderr'));
             }
 
             // PASO 4: Establecer breakpoint de entrada
@@ -1434,12 +1529,28 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
             await this._waitForZesarux(300);
             
-            // Now run - this will execute until it hits our breakpoint
-            this.sendEvent(new OutputEvent(`[Debug] Ejecutando run (se detendrá en breakpoint)...\n`));
-            await this._sendCommand('run');
+            // PASO 6: run — espera hasta que ZEsarUX pare en un breakpoint (hasta 30s)
+            this.sendEvent(new OutputEvent(`[Debug] Ejecutando run (esperando breakpoint)...\n`));
+            const runResp = await this._sendCommandAndWait('run', 30000);
+            this.sendEvent(new OutputEvent(`[Debug] run detenido: ${String(runResp).replace(/\n/g,' ').slice(0, 120)}\n`));
+
+            // Mapear PC de la respuesta a archivo/línea Boriel
+            const runPcMatch = String(runResp).match(/PC=([0-9A-Fa-f]{1,4})/i);
+            if (runPcMatch) {
+                const stoppedPc = parseInt(runPcMatch[1], 16);
+                this._lastPC = stoppedPc;
+                const mapped = this._pcToFileAndLine(stoppedPc);
+                if (mapped) {
+                    this._lastBasLine = mapped.line;
+                    this._lastSourceFile = mapped.file;
+                    this.sendEvent(new OutputEvent(`[Debug] Parado en ${path.basename(mapped.file)}:${mapped.line} (PC=0x${stoppedPc.toString(16).toUpperCase()})\n`));
+                } else {
+                    this.sendEvent(new OutputEvent(`[Debug] PC=0x${stoppedPc.toString(16).toUpperCase()} no mapeado a línea Boriel\n`));
+                }
+            }
             
-            // The emulator will send async notification when breakpoint is hit
-            this.sendEvent(new OutputEvent(`[Debug] Programa cargado y ejecutándose hasta breakpoint\n`));
+            // The emulator has stopped at a breakpoint
+            this.sendEvent(new OutputEvent(`[Debug] Programa cargado y detenido en breakpoint\n`));
             
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] Error durante smartload: ${e.message}\n`, 'stderr'));
@@ -1933,11 +2044,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         if (this._breakpointsEnabled) return;
         if (!this._debugSocket || this._debugSocket.destroyed) return;
         try {
-            // Intentar con send+wait para capturar respuesta
             this.sendEvent(new OutputEvent(`> enable-breakpoints\n`, 'console'));
             const resp = await this._sendCommandAndWait('enable-breakpoints');
             const txt = String(resp || '').toLowerCase();
-            if (txt.includes('unknown command') || txt.includes('not found') || txt.includes('error')) {
+            if (txt.includes('already enabled')) {
+                // ZEsarUX ya los tenía habilitados: éxito
+                this._breakpointsEnabled = true;
+                this.sendEvent(new OutputEvent(`✓ Breakpoints ya estaban habilitados\n`));
+            } else if (txt.includes('unknown command') || txt.includes('not found') || (txt.includes('error') && !txt.includes('already'))) {
                 this._breakpointsEnabled = false;
                 this.sendEvent(new OutputEvent(`✗ enable-breakpoints no soportado o falló: ${String(resp).replace(/\n/g,' ')}\n`, 'stderr'));
             } else {
@@ -1945,7 +2059,6 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`✓ Breakpoints habilitados: ${String(resp).replace(/\n/g,' ')}\n`));
             }
         } catch (e) {
-            // Si sendAndWait falló, caer en fallback conservador
             this._breakpointsEnabled = false;
             this.sendEvent(new OutputEvent(`✗ No se pudo confirmar enable-breakpoints: ${e.message}\n`, 'stderr'));
         }
@@ -2003,6 +2116,31 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         } catch (e) {
             return false;
         }
+    }
+
+    /**
+     * Dado un PC (número decimal), busca en _fileAddrMap el archivo fuente y la
+     * línea Boriel que corresponden a esa dirección.
+     * Devuelve { file: absPath, line: number } o null si no hay mapeo.
+     */
+    _pcToFileAndLine(pc) {
+        if (!this._fileAddrMap) return null;
+        for (const [absFile, lineMap] of Object.entries(this._fileAddrMap)) {
+            for (const [lineStr, addr] of Object.entries(lineMap)) {
+                if (parseInt(addr, 10) === pc) {
+                    return { file: absFile, line: parseInt(lineStr, 10) };
+                }
+            }
+        }
+        // Fallback: buscar en _basLineToAddress (solo main file)
+        if (this._basLineToAddress) {
+            for (const [lineStr, addr] of Object.entries(this._basLineToAddress)) {
+                if (parseInt(addr, 10) === pc) {
+                    return { file: this._sourceFile, line: parseInt(lineStr, 10) };
+                }
+            }
+        }
+        return null;
     }
 
     _handleSocketData(data) {
@@ -2354,6 +2492,32 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
         for (const clientLine of clientLines) {
             // clientLine is the line in the Boriel source (1-based)
+
+            // File-aware lookup: if we have per-file address map, use it directly
+            if (this._fileAddrMap && sourcePath && this._fileAddrMap[sourcePath] && this._fileAddrMap[sourcePath][clientLine] !== undefined) {
+                const addr = this._fileAddrMap[sourcePath][clientLine];
+                const addrToken = `${addr.toString(16).toUpperCase()}h`;
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoint line ${clientLine} (${path.basename(sourcePath)}) -> 0x${addr.toString(16).toUpperCase()} (file-aware map)\n`));
+                try {
+                    if (haveConnection) {
+                        try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+                        const installed = await this._installBreakpoint(addrToken, clientLine);
+                        if (installed) {
+                            breakpoints.push({ verified: true, line: clientLine });
+                        } else {
+                            this._pendingBreakpoints.push({ addrToken, clientLine });
+                            breakpoints.push({ verified: false, line: clientLine, message: 'Breakpoint pendiente' });
+                        }
+                    } else {
+                        this._pendingBreakpoints.push({ addrToken, clientLine });
+                        breakpoints.push({ verified: false, line: clientLine, message: 'Breakpoint pendiente hasta conexión' });
+                    }
+                } catch (err) {
+                    breakpoints.push({ verified: false, line: clientLine, message: `Error: ${err.message}` });
+                }
+                continue;
+            }
+
             const basLine = String(clientLine);
             const asmLinesForBas = this._lineMap[basLine];
             if (!asmLinesForBas || asmLinesForBas.length === 0) {
@@ -2425,6 +2589,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
     async continueRequest(response, args) {
         this._stopped = false;
+        this.sendResponse(response);
         try {
             // If there is a user-set breakpoint after current Boriel line, set it as the next run target
             const current = this._lastBasLine || 0;
@@ -2448,11 +2613,28 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 }
             }
 
-            await this._sendCommand('run');
+            // Ejecutar hasta el siguiente breakpoint y esperar respuesta (hasta 30s)
+            const runResp = await this._sendCommandAndWait('run', 30000);
+            this.sendEvent(new OutputEvent(`[Debug] continue detenido: ${String(runResp).replace(/\n/g,' ').slice(0, 120)}\n`));
+
+            // Mapear PC de la respuesta
+            const pcMatch = String(runResp).match(/PC=([0-9A-Fa-f]{1,4})/i);
+            if (pcMatch) {
+                const stoppedPc = parseInt(pcMatch[1], 16);
+                this._lastPC = stoppedPc;
+                const mapped = this._pcToFileAndLine(stoppedPc);
+                if (mapped) {
+                    this._lastBasLine = mapped.line;
+                    this._lastSourceFile = mapped.file;
+                    this.sendEvent(new OutputEvent(`[Debug] Parado en ${path.basename(mapped.file)}:${mapped.line} (PC=0x${stoppedPc.toString(16).toUpperCase()})\n`));
+                }
+            }
+
+            this._stopped = true;
+            this.sendEvent(new StoppedEvent('breakpoint', 1));
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] continueRequest error: ${e.message}\n`, 'stderr'));
         }
-        this.sendResponse(response);
     }
 
     async pauseRequest(response, args) {
@@ -2788,9 +2970,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         // Intentar retornar un stack frame con fuente y línea mapeada desde el último PC conocido
         let source = undefined;
         let line = 1;
-        // Prefer the known source file if available
-        if (this._lastBasLine && this._sourceFile && fs.existsSync(this._sourceFile)) {
-            source = new Source(path.basename(this._sourceFile), this._sourceFile);
+        // Prefer _lastSourceFile (file where the breakpoint actually stopped) over the main source file
+        const stoppedFile = this._lastSourceFile || this._sourceFile;
+        if (this._lastBasLine && stoppedFile && fs.existsSync(stoppedFile)) {
+            source = new Source(path.basename(stoppedFile), stoppedFile);
             line = this._lastBasLine;
         } else {
             // Try to locate a sensible .bas source file if the stored path is missing
