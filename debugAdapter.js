@@ -37,6 +37,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     this._asmLabelAddressMap = {}; // mapa de etiqueta BAS___N___filename -> dirección (desde zxbasm Declaring)
         this._lastPC = null; // último PC leído del emulador
         this._previousPC = null; // PC anterior (para detectar isEndOfSub en ambas posiciones)
+        this._programEndAddress = null; // dirección máxima mapeada; si PC >= esta, el programa terminó
         this._lastAsmLine = null; // última línea ASM conocida para PC
         this._lastBasLine = null; // última línea Boriel conocida para PC
         this._lastSourceFile = null; // archivo fuente donde paró el breakpoint
@@ -1002,6 +1003,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
                     // IMPORTANT: Update the in-memory _reverseLineMap to use the new extended format
                     this._reverseLineMap = reverseExtended;
+
+                    // Compute the highest mapped address so we can detect program end
+                    const allAddrs = Object.keys(this._addrToBasLine).map(k => parseInt(k, 10)).filter(n => !isNaN(n));
+                    if (allAddrs.length > 0) {
+                        this._programEndAddress = Math.max(...allAddrs);
+                        this.sendEvent(new OutputEvent(`[Debug] Dirección máxima mapeada (programEndAddress): 0x${this._programEndAddress.toString(16).toUpperCase()}\n`));
+                    }
                 }
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] No se pudo persistir linemap: ${e.message}\n`, 'stderr'));
@@ -2586,6 +2594,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     this._lastBasLine = mapped.line;
                     this._lastSourceFile = mapped.file;
                     this.sendEvent(new OutputEvent(`[Debug] Parado en ${path.basename(mapped.file)}:${mapped.line} (PC=0x${stoppedPc.toString(16).toUpperCase()})\n`));
+                } else if ((this._programEndAddress !== null && stoppedPc >= this._programEndAddress) || stoppedPc < 0x4000) {
+                    this.sendEvent(new OutputEvent(`[Debug] PC=0x${stoppedPc.toString(16).toUpperCase()} - programa finalizado\n`));
+                    this.sendEvent(new TerminatedEvent());
+                    return;
                 }
             }
 
@@ -2653,6 +2665,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this.sendEvent(new OutputEvent(`[Debug][nextRequest] ===== STEP OVER REQUEST INITIATED =====\n`));
         // Step Over: ir a la siguiente línea Boriel
         try {
+            // Early exit: if PC is in ROM zone (< 0x4000) or past the last mapped address, the program has ended
+            if (this._lastPC !== null && (
+                (this._programEndAddress !== null && this._lastPC >= this._programEndAddress) ||
+                this._lastPC < 0x4000
+            )) {
+                this.sendEvent(new OutputEvent(`[Debug][nextRequest] PC=0x${this._lastPC.toString(16).toUpperCase()} - programa finalizado (ROM zone o >= programEndAddress)\n`));
+                this.sendResponse(response);
+                this.sendEvent(new TerminatedEvent());
+                return;
+            }
+
             // FAST EXIT OPTIMIZATION: Check if we're on the last line of a function (current OR previous PC)
             let usedFastExit = false;
             const endOfSubInfo = this._checkIsEndOfSubAtCurrentOrPreviousPC();
@@ -2832,13 +2855,32 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
                 // (Do not auto-run when we reach the last Boriel line here; leave it stopped.)
 
+                // Check if we've reached or passed the last mapped address -> program ended
+                const currentPc = this._lastPC;
+                if (this._programEndAddress !== null && currentPc !== null && currentPc >= this._programEndAddress) {
+                    this.sendEvent(new OutputEvent(`[Debug] Step Over: PC=0x${currentPc.toString(16).toUpperCase()} >= programEndAddress=0x${this._programEndAddress.toString(16).toUpperCase()} - programa finalizado\n`));
+                    this.sendResponse(response);
+                    this.sendEvent(new TerminatedEvent());
+                    return;
+                }
+
                 this._stopped = true;
                 this.sendResponse(response);
                 this.sendEvent(new StoppedEvent('step', 1));
                 return;
             } else {
                 this.sendEvent(new OutputEvent(`[Debug] Step Over: did not find mapped Boriel line after ${steps} asm steps\n`, 'stderr'));
-                this.sendResponse(response);
+                const finalPc = this._lastPC;
+                if (finalPc !== null && finalPc !== undefined &&
+                    ((this._programEndAddress !== null && finalPc >= this._programEndAddress) || finalPc < 0x4000)) {
+                    this.sendEvent(new OutputEvent(`[Debug] PC=0x${finalPc.toString(16).toUpperCase()} - programa finalizado\n`));
+                    this.sendResponse(response);
+                    this.sendEvent(new TerminatedEvent());
+                } else {
+                    this._stopped = true;
+                    this.sendResponse(response);
+                    this.sendEvent(new StoppedEvent('step', 1));
+                }
                 return;
             }
         } catch (err) {
@@ -2851,6 +2893,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         // Step Into: perform CPU single-instruction steps until we reach an address
         // that maps to a Boriel source line (this._addrToBasLine).
         try {
+            // Early exit: if PC is in ROM zone (< 0x4000) or past the last mapped address, the program has ended
+            if (this._lastPC !== null && (
+                (this._programEndAddress !== null && this._lastPC >= this._programEndAddress) ||
+                this._lastPC < 0x4000
+            )) {
+                this.sendEvent(new OutputEvent(`[Debug][stepInRequest] PC=0x${this._lastPC.toString(16).toUpperCase()} - programa finalizado (ROM zone o >= programEndAddress)\n`));
+                this.sendResponse(response);
+                this.sendEvent(new TerminatedEvent());
+                return;
+            }
+
             if (!this._addrToBasLine || Object.keys(this._addrToBasLine).length === 0) {
                 this.sendEvent(new OutputEvent(`[Debug] No reverse addr->Bas map available for stepIn; falling back to single cpu-step\n`, 'stderr'));
                 try { await this._sendCommand('cpu-step'); } catch (e) { this.sendEvent(new OutputEvent(`[Debug] cpu-step failed: ${e.message}\n`, 'stderr')); }
@@ -2914,13 +2967,33 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             if (foundBasLine) {
                 this._lastBasLine = foundBasLine;
                 // _lastSourceFile already set inside the loop when _addrToFileAndLine matched
+
+                // Check if we've reached or passed the last mapped address -> program ended
+                const currentPc = this._lastPC;
+                if (this._programEndAddress !== null && currentPc !== null && currentPc >= this._programEndAddress) {
+                    this.sendEvent(new OutputEvent(`[Debug] Step Into: PC=0x${currentPc.toString(16).toUpperCase()} >= programEndAddress=0x${this._programEndAddress.toString(16).toUpperCase()} - programa finalizado\n`));
+                    this.sendResponse(response);
+                    this.sendEvent(new TerminatedEvent());
+                    return;
+                }
+
                 this._stopped = true;
                 this.sendResponse(response);
                 this.sendEvent(new StoppedEvent('step', 1));
                 return;
             } else {
                 this.sendEvent(new OutputEvent(`[Debug] Step Into: did not find mapped Boriel line after ${steps} asm steps\n`, 'stderr'));
-                this.sendResponse(response);
+                const finalPc = this._lastPC;
+                if (finalPc !== null && finalPc !== undefined &&
+                    ((this._programEndAddress !== null && finalPc >= this._programEndAddress) || finalPc < 0x4000)) {
+                    this.sendEvent(new OutputEvent(`[Debug] PC=0x${finalPc.toString(16).toUpperCase()} - programa finalizado\n`));
+                    this.sendResponse(response);
+                    this.sendEvent(new TerminatedEvent());
+                } else {
+                    this._stopped = true;
+                    this.sendResponse(response);
+                    this.sendEvent(new StoppedEvent('step', 1));
+                }
                 return;
             }
         } catch (err) {
