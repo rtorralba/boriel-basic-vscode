@@ -948,9 +948,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 stepOutAddress: stepOutAddress
                             };
                             try {
-                                this._addrToBasLine[parseInt(addr,10)] = borielLineNum;
-                                if (lineSourceFile) {
-                                    this._addrToFileAndLine[parseInt(addr,10)] = { file: lineSourceFile, line: borielLineNum };
+                                const addrKey = parseInt(addr, 10);
+                                // First-write-wins: basKeys is sorted ascending so lower line numbers
+                                // (e.g. main.bas:5) are processed before higher ones (e.g. sprite.bas:316).
+                                // When two labels share the same address (one is a pure-label with no data
+                                // between it and the next label), the first mapping wins so that
+                                // _pcToFileAndLine() returns the correct main-file entry.
+                                if (!this._addrToBasLine[addrKey]) {
+                                    this._addrToBasLine[addrKey] = borielLineNum;
+                                }
+                                if (lineSourceFile && !this._addrToFileAndLine[addrKey]) {
+                                    this._addrToFileAndLine[addrKey] = { file: lineSourceFile, line: borielLineNum };
                                 }
                             } catch (e) {}
                         }
@@ -1126,9 +1134,6 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             return candidates;
         };
 
-        const includeRegex1 = /#include\s+["<]([^">]+)[">]/i;
-        const includeRegex2 = /\bINCLUDE\b\s+["']?([^"'\s]+)["']?/i;
-
         const walk = (filePath) => {
             try {
                 if (!filePath) return;
@@ -1146,10 +1151,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const currentDir = path.dirname(normalized);
 
                 for (const ln of lines) {
-                    let m = ln.match(includeRegex1);
-                    if (!m) m = ln.match(includeRegex2);
-                    if (m && m[1]) {
-                        const incName = m[1].trim();
+                    // Only follow user includes with quotes (""), not system includes (<>)
+                    const includeRegexQuoted = /#include\s+"([^"]+)"|\bINCLUDE\b\s+["']([^"'\s]+)["']/i;
+                    const m = ln.match(includeRegexQuoted);
+                    const incName = m && (m[1] || m[2]) ? (m[1] || m[2]).trim() : null;
+                    if (incName) {
                         const candidates = resolveIncludeCandidates(incName, currentDir);
                         let found = null;
                         for (const cand of candidates) {
@@ -1238,19 +1244,25 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Ejemplo: lib/functions.bas → lib_functions__bas
             const fileLabel = relativePath.replace(/[\\\/]/g, '_').replace(/\./g, '__');
 
+            // Track whether the previous logical line is still continuing (ends with _ )
+            let inContinuation = false;
+
             sourceLines.forEach((line, index) => {
                 const originalLineNumber = index + 1;
                 const trimmedLine = line.trim();
 
-                // Solo añadir marcadores para líneas de código real ejecutable.
-                // Excluir: comentarios, directivas de preprocesador (#include, #define…),
-                // sentencias de flujo/declaración y líneas vacías.
+                // Detect line continuation: line ends with ' _' or just '_' (Boriel Basic)
+                const isContinuation = inContinuation;
+                // Update continuation state for next line
+                inContinuation = /\s_\s*$/.test(trimmedLine) || trimmedLine === '_';
+
                 const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
                 const isPreprocessor = trimmedLine.startsWith('#');
                 const isComment = trimmedLine.startsWith("'") || trimmedLine.toUpperCase().startsWith('REM ');
                 // DIM sin inicializador (sin =) es solo una declaración, no genera código
                 const isDimNoInit = firstToken === 'DIM' && !trimmedLine.includes('=');
-                if (trimmedLine && !isComment && !isPreprocessor && !isDimNoInit && !FLOW_TOKENS.has(firstToken)) {
+                // No insertar marcador en líneas de continuación (son parte de la sentencia anterior)
+                if (trimmedLine && !isComment && !isPreprocessor && !isDimNoInit && !isContinuation && !FLOW_TOKENS.has(firstToken)) {
                     
                     // Añadir marcador ANTES de la línea de código
                     // Formato: BAS___lineNumber___filename
@@ -1454,8 +1466,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             return;
         }
 
-        // Limpiar breakpoints pendientes con direcciones posiblemente erróneas
+        // Limpiar TODOS los breakpoints previos que pudieron instalarse con direcciones
+        // incorrectas (desde el fallback de setBreakPointsRequest antes de tener _fileAddrMap).
         this._pendingBreakpoints = [];
+        try {
+            await this._sendCommandAndWait('disable-breakpoint A');
+        } catch (e) { /* ignorar si no soportado */ }
 
         // Normalizar claves de _fileAddrMap para comparación case-insensitive en Windows
         const normMap = {};
@@ -2476,189 +2492,57 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async setBreakPointsRequest(response, args) {
-    const sourcePath = args.source.path;
+        const sourcePath = args.source.path;
         const clientLines = args.lines || [];
-        // Implementación: traducir líneas Boriel -> primeras líneas ASM -> dirección física
         const breakpoints = [];
 
-        // Necesitamos tener cargado el mapeo de líneas
-        if (!this._lineMap) {
-            // No tenemos mapeo: no podemos verificar
-            for (const line of clientLines) {
-                breakpoints.push({ verified: false, line, message: 'No hay mapeo de líneas disponible' });
+        // Guardar los breakpoints del usuario por archivo para re-resolución posterior
+        try {
+            if (sourcePath) {
+                this._userBreakpointsByFile[sourcePath] = new Set(
+                    (clientLines || []).map(n => parseInt(n, 10)).filter(n => !isNaN(n))
+                );
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints de usuario en ${path.basename(sourcePath)}: ${Array.from(this._userBreakpointsByFile[sourcePath]).sort((a,b)=>a-b).join(',')}\n`));
+            }
+        } catch (e) {}
+
+        const haveConnection = this._debugSocket && !this._debugSocket.destroyed;
+
+        // Si ya tenemos el mapa por archivo, instalamos directamente con la dirección exacta
+        if (this._fileAddrMap && sourcePath && this._fileAddrMap[sourcePath]) {
+            for (const clientLine of clientLines) {
+                const addr = this._fileAddrMap[sourcePath][clientLine];
+                if (addr !== undefined) {
+                    const addrToken = `${addr.toString(16).toUpperCase()}h`;
+                    this.sendEvent(new OutputEvent(`[Debug] Breakpoint ${path.basename(sourcePath)}:${clientLine} → 0x${addr.toString(16).toUpperCase()}\n`));
+                    try {
+                        if (haveConnection) {
+                            try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+                            const installed = await this._installBreakpoint(addrToken, clientLine);
+                            breakpoints.push({ verified: !!installed, line: clientLine });
+                        } else {
+                            this._pendingBreakpoints.push({ addrToken, clientLine });
+                            breakpoints.push({ verified: false, line: clientLine, message: 'Pendiente hasta conexión' });
+                        }
+                    } catch (err) {
+                        breakpoints.push({ verified: false, line: clientLine, message: `Error: ${err.message}` });
+                    }
+                } else {
+                    // Línea no ejecutable (comentario, declaración sin código…)
+                    breakpoints.push({ verified: false, line: clientLine, message: 'Línea sin código ejecutable' });
+                }
             }
             response.body = { breakpoints };
             this.sendResponse(response);
             return;
         }
 
-        // Necesitamos el archivo .asm para calcular direcciones
-        const asmFile = this._asmFile;
-        let asmLines = null;
-        if (asmFile && fs.existsSync(asmFile)) {
-            asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
-        }
-
-        // Intentar generar un mapeo exacto ASM-line -> address usando zxbasm -d
-        let asmLineToAddress = {};
-        if (asmFile && fs.existsSync(asmFile)) {
-            try {
-                let zxbasmPath;
-                let nullDevice;
-                if (process.platform === 'win32') {
-                    zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-windows', 'zxbasm.exe');
-                    nullDevice = 'nul';
-                } else if (process.platform === 'linux') {
-                    zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-linux', 'zxbasm');
-                    nullDevice = '/dev/null';
-                } else if (process.platform === 'darwin') {
-                    zxbasmPath = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbasm');
-                    nullDevice = '/dev/null';
-                }
-                const zxbasmCmd = `${zxbasmPath} -d "${asmFile}" -o ${nullDevice}`;
-                this.sendEvent(new OutputEvent(`[Debug] Ejecutando zxbasm para mapear ASM: ${zxbasmCmd}\n`));
-                const execSync = require('child_process').execSync;
-                const out = execSync(zxbasmCmd, { cwd: path.dirname(asmFile), encoding: 'utf8' });
-
-                // Parsear líneas de debug que contienen direcciones: "<hex>h [<hex>h] ASM: ..."
-                const addrLines = out.split('\n').filter(l => /\bASM:\s*/.test(l));
-                const addresses = [];
-                const addrRe = /([0-9A-Fa-f]+)h\s+\[([0-9A-Fa-f]+)h\]\s+ASM:/;
-                for (const l of addrLines) {
-                    const m = l.match(addrRe);
-                    if (m) {
-                        // use the bracketed value (m[2]) as the reliable assembled address
-                        const hex = m[2];
-                        addresses.push(parseInt(hex, 16));
-                    }
-                }
-
-                // Mapear líneas ASM no vacías a direcciones en orden
-                let addrIndex = 0;
-                let currentOrg = 32768;
-                for (let i = 0; i < asmLines.length; i++) {
-                    const l = asmLines[i].trim();
-                    // Detectar ORG
-                    const mOrg = l.match(/^org\s+(0x[0-9a-fA-F]+|\d+)/);
-                    if (mOrg) {
-                        const v = mOrg[1];
-                        currentOrg = v.startsWith('0x') ? parseInt(v, 16) : parseInt(v, 10);
-                    }
-                    if (!l || l.startsWith(';') || l.startsWith('#') || l.toUpperCase().startsWith('END') || l.toUpperCase().startsWith('ASM')) continue;
-                    if (addrIndex < addresses.length) {
-                        asmLineToAddress[i + 1] = addresses[addrIndex++];
-                    } else {
-                        // si no hay más direcciones, estimar
-                        asmLineToAddress[i + 1] = currentOrg + (i);
-                    }
-                }
-
-                this.sendEvent(new OutputEvent(`[Debug] Mapas de direcciones ASM generados: ${Object.keys(asmLineToAddress).length} entradas\n`));
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] No se pudo generar mapa exacto con zxbasm: ${e.message}\n`));
-            }
-        }
-
-        // Check if we have a connection before setting breakpoints
-        let haveConnection = this._debugSocket && !this._debugSocket.destroyed;
-        if (!haveConnection) {
-            this.sendEvent(new OutputEvent(`[Debug] No hay conexión con ZEsarUX: posponiendo establecimiento de breakpoints hasta la conexión\n`));
-        }
-
+        // _fileAddrMap aún no disponible (debug no iniciado): marcar todos como pendientes.
+        // _reResolveUserBreakpoints los instalará con la dirección correcta tras la compilación.
         for (const clientLine of clientLines) {
-            // clientLine is the line in the Boriel source (1-based)
-
-            // File-aware lookup: if we have per-file address map, use it directly
-            if (this._fileAddrMap && sourcePath && this._fileAddrMap[sourcePath] && this._fileAddrMap[sourcePath][clientLine] !== undefined) {
-                const addr = this._fileAddrMap[sourcePath][clientLine];
-                const addrToken = `${addr.toString(16).toUpperCase()}h`;
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoint line ${clientLine} (${path.basename(sourcePath)}) -> 0x${addr.toString(16).toUpperCase()} (file-aware map)\n`));
-                try {
-                    if (haveConnection) {
-                        try { await this._ensureBreakpointsEnabled(); } catch (e) {}
-                        const installed = await this._installBreakpoint(addrToken, clientLine);
-                        if (installed) {
-                            breakpoints.push({ verified: true, line: clientLine });
-                        } else {
-                            this._pendingBreakpoints.push({ addrToken, clientLine });
-                            breakpoints.push({ verified: false, line: clientLine, message: 'Breakpoint pendiente' });
-                        }
-                    } else {
-                        this._pendingBreakpoints.push({ addrToken, clientLine });
-                        breakpoints.push({ verified: false, line: clientLine, message: 'Breakpoint pendiente hasta conexión' });
-                    }
-                } catch (err) {
-                    breakpoints.push({ verified: false, line: clientLine, message: `Error: ${err.message}` });
-                }
-                continue;
-            }
-
-            const basLine = String(clientLine);
-            const asmLinesForBas = this._lineMap[basLine];
-            if (!asmLinesForBas || asmLinesForBas.length === 0) {
-                breakpoints.push({ verified: false, line: clientLine, message: 'No hay mapeo ASM para esta línea' });
-                continue;
-            }
-
-            // Tomar la primera línea ASM correspondiente (números de línea ASM son 1-based)
-            const asmLineNumber = asmLinesForBas[0];
-            let addr = null;
-
-            // Si zxbasm nos dio una dirección exacta para la línea ASM, úsala
-            if (asmLineToAddress && asmLineToAddress[asmLineNumber] !== undefined) {
-                addr = asmLineToAddress[asmLineNumber];
-            } else if (asmLineToAddress && Object.keys(asmLineToAddress).length > 0) {
-                // Fallback inteligente: buscar la línea ASM conocida más cercana por debajo
-                let found = false;
-                for (let k = asmLineNumber - 1; k >= 1; k--) {
-                    if (asmLineToAddress[k] !== undefined) {
-                        addr = asmLineToAddress[k] + (asmLineNumber - k);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    // Si no encontramos ninguna línea conocida, usar la primera conocida y ajustar
-                    const firstKey = Math.min(...Object.keys(asmLineToAddress).map(k => parseInt(k, 10)));
-                    addr = asmLineToAddress[firstKey] + (asmLineNumber - firstKey);
-                }
-            } else {
-                // Último recurso: estimar desde 0x8000 (32768) como base
-                addr = 0x8000 + (asmLineNumber - 1);
-            }
-
-            try {
-                const addrToken = `${addr.toString(16).toUpperCase()}h`;
-                if (haveConnection) {
-                    try { await this._ensureBreakpointsEnabled(); } catch (e) {}
-                    const installed = await this._installBreakpoint(addrToken, clientLine);
-                    if (installed) {
-                        breakpoints.push({ verified: true, line: clientLine });
-                    } else {
-                        // if installation failed, enqueue for later
-                        this._pendingBreakpoints.push({ addrToken, clientLine });
-                        breakpoints.push({ verified: false, line: clientLine, message: 'Breakpoint pendiente hasta conexión con ZEsarUX' });
-                    }
-                } else {
-                    // Guardar para aplicar más tarde cuando haya conexión
-                    this._pendingBreakpoints.push({ addrToken, clientLine });
-                    breakpoints.push({ verified: false, line: clientLine, message: 'Breakpoint pendiente hasta conexión con ZEsarUX' });
-                }
-            } catch (err) {
-                breakpoints.push({ verified: false, line: clientLine, message: `Error estableciendo break: ${err.message}` });
-            }
+            breakpoints.push({ verified: false, line: clientLine, message: 'Pendiente hasta compilación' });
         }
-
         response.body = { breakpoints };
-        // Store the user requested breakpoints for this source file so we can
-        // use them later (e.g. entry breakpoint preference and run->next-breakpoint behavior)
-        try {
-            if (sourcePath) {
-                this._userBreakpointsByFile[sourcePath] = new Set((clientLines || []).map(n => parseInt(n, 10)).filter(n => !isNaN(n)));
-                this.sendEvent(new OutputEvent(`[Debug] User breakpoints for ${sourcePath}: ${Array.from(this._userBreakpointsByFile[sourcePath]).sort((a,b)=>a-b).join(',')}\n`));
-            }
-        } catch (e) {}
-
         this.sendResponse(response);
     }
 
@@ -2881,7 +2765,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // UNLESS we just used the fast exit strategy - in that case continue stepping normally
             try {
                 const basKeys = this._basLineToAddress ? Object.keys(this._basLineToAddress).map(k => parseInt(k,10)).filter(n=>!isNaN(n)) : [];
-                const maxBas = basKeys.length ? Math.max(...basKeys) : null;
+                // Use only the main source file's line numbers so that sprite/include file lines
+                // (e.g. sprite.bas:316) don't inflate the "last mapped line" boundary.
+                const mainFileLines = (this._fileAddrMap && this._sourceFile && this._fileAddrMap[this._sourceFile])
+                    ? Object.keys(this._fileAddrMap[this._sourceFile]).map(k => parseInt(k, 10)).filter(n => !isNaN(n))
+                    : basKeys;
+                const maxBas = mainFileLines.length ? Math.max(...mainFileLines) : (basKeys.length ? Math.max(...basKeys) : null);
                 if (!usedFastExit && maxBas !== null && this._lastBasLine && parseInt(this._lastBasLine,10) === maxBas) {
                     this.sendEvent(new OutputEvent(`[Debug] Step Over requested but current Boriel line ${this._lastBasLine} is last mapped line -> issuing run\n`));
                     setImmediate(async () => {
