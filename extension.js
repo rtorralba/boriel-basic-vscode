@@ -146,6 +146,27 @@ function compileBorielBasic(options = {}) {
     });
 }
 
+async function findSystemPython() {
+    // Try candidates in order of preference
+    const candidates = process.platform === 'win32'
+        ? ['python', 'python3', 'py']
+        : ['python3', 'python'];
+
+    for (const cmd of candidates) {
+        try {
+            const version = await new Promise((res, rej) => {
+                child_process.exec(`${cmd} --version`, (err, stdout, stderr) => {
+                    if (err) return rej(err);
+                    res((stdout || stderr || '').trim());
+                });
+            });
+            // Must be Python 3
+            if (/python\s*3/i.test(version)) return cmd;
+        } catch (e) { /* try next */ }
+    }
+    return null;
+}
+
 async function ensureZXP2BorielInstalled(context) {
     const venvPath = path.join(context.extensionPath, 'venv');
     const pythonPath = process.platform === 'win32'
@@ -170,6 +191,17 @@ async function ensureZXP2BorielInstalled(context) {
                 return;
             }
 
+            // Detect system Python 3
+            const sysPython = await findSystemPython();
+            if (!sysPython) {
+                vscode.window.showErrorMessage(
+                    'No se encontró Python 3. Instálalo desde https://www.python.org/downloads/ ' +
+                    'y asegúrate de marcarlo en el PATH durante la instalación.'
+                );
+                reject(false);
+                return;
+            }
+
             // Create venv
             await vscode.window.withProgress(
                 {
@@ -179,7 +211,7 @@ async function ensureZXP2BorielInstalled(context) {
                 },
                 async (progress) => {
                     return new Promise((venvResolve, venvReject) => {
-                        child_process.exec(`python3 -m venv "${venvPath}"`, (error, stdout, stderr) => {
+                        child_process.exec(`"${sysPython}" -m venv "${venvPath}"`, (error, stdout, stderr) => {
                             if (error) {
                                 vscode.window.showErrorMessage(`Error al crear entorno virtual: ${stderr || error.message}`);
                                 console.error('Venv creation error:', stderr);
