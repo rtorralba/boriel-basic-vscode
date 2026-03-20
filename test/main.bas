@@ -1,8 +1,11 @@
 #include "lib/functions.bas"
 
+Dim person1 As String = "Pepe"
+Dim person2 As String = "Luis"
+
 Print "Hello, World!"
-Print "Hello, Pepe!"
-Print "Hello, Luis!"
+Print "Hello, " + person1 + "!"
+Print "Hello, " + person2 + "!"
 
 greetings()
 

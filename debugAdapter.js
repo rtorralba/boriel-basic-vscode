@@ -54,6 +54,36 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._globalVariables = [];
         if (!asmFile || !fs.existsSync(asmFile)) return;
         try {
+            // Collect variable type info from .bas source files
+            // DIM varname AS STRING → mark as string_ptr; other types kept as-is
+            const stringVarNames = new Set();
+            const varDeclaredType = {}; // varName (lowercase) → declared ZX Basic type
+            const basFilesToScan = [];
+            if (this._sourceFile && fs.existsSync(this._sourceFile)) {
+                basFilesToScan.push(this._sourceFile);
+            }
+            // Also scan included files if we have them
+            if (this._collectedBasFiles) {
+                for (const f of this._collectedBasFiles) {
+                    if (!basFilesToScan.includes(f)) basFilesToScan.push(f);
+                }
+            }
+            const dimRe = /^\s*DIM\s+(\w+)\s+AS\s+(\w+)/i;
+            for (const basFile of basFilesToScan) {
+                try {
+                    const lines = fs.readFileSync(basFile, 'utf8').split('\n');
+                    for (const l of lines) {
+                        const m = l.match(dimRe);
+                        if (m) {
+                            const vname = m[1].toLowerCase();
+                            const vtype = m[2].toLowerCase();
+                            varDeclaredType[vname] = vtype;
+                            if (vtype === 'string') stringVarNames.add(vname);
+                        }
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
             const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n').filter(line => line.trim() !== '');
             for (let i = 0; i < asmLines.length; i++) {
                 const line = asmLines[i];
@@ -74,8 +104,6 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             let size = 0;
                             if (directive === 'db' || directive === 'defb') {
                                 type = 'byte';
-                                // count number of comma separated values or string literal
-                                // If rest contains a quoted string, count characters
                                 const strMatch = rest.match(/^"([^"]*)"/);
                                 if (strMatch) {
                                     size = strMatch[1].length;
@@ -95,6 +123,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 type = 'string';
                                 const strMatch = rest.match(/^"([^"]*)"/);
                                 size = strMatch ? strMatch[1].length : rest.length;
+                            }
+
+                            // Override type if the .bas source declared this as STRING.
+                            // ZX Basic strings are stored as a 2-byte pointer (the variable itself
+                            // is DEFB 00,00 = a ptr) → type string_ptr, dereference at read time.
+                            const bareNameLower = name.replace(/^_+/, '').toLowerCase();
+                            if (stringVarNames.has(bareNameLower) && size === 2) {
+                                type = 'string_ptr';
                             }
 
                             // Determine runtime address: prefer asmSymbolAddressMap or asmLineToAddress
@@ -295,6 +331,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         // Buscar solo los archivos .bas a partir del main (siguiendo includes),
                         // en lugar de procesar todos los .bas del workspace.
                         const collectedBas = this._collectBasFilesFromMain(mainBas, workspaceDir);
+                        this._collectedBasFiles = collectedBas; // store for _buildGlobalVariableMap
                         this.sendEvent(new OutputEvent(`[Debug] Encontrados ${collectedBas.length} archivos .bas referenciados para preprocesar\n`));
 
                         // Preprocesar cada archivo manteniendo la estructura de carpetas
@@ -3151,26 +3188,61 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             if (g.addr) {
                                 const addrNum = parseInt(g.addr, 10);
                                 const hexAddr = addrNum.toString(16).toUpperCase().padStart(4, '0');
-                                // Attempt to read memory from emulator
-                                const bytes = await this._readMemoryZesarux(addrNum, Math.max(1, Math.min(g.size || 1, 256)));
-                                if (bytes && bytes.length > 0) {
-                                    if (g.type === 'byte' || (g.size === 1)) {
-                                        display = `byte ${bytes[0]} (0x${bytes[0].toString(16).toUpperCase()})`;
-                                    } else if (g.type === 'word' || (g.size === 2)) {
-                                        const lo = bytes[0] || 0;
-                                        const hi = bytes[1] || 0;
-                                        const val = lo + (hi << 8);
-                                        display = `word ${val} (0x${val.toString(16).toUpperCase()})`;
-                                    } else if (g.type === 'string') {
-                                        const chars = bytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
-                                        display = `string "${chars}"`;
-                                    } else if (g.type === 'reserve') {
-                                        display = `reserve ${g.size} bytes @ 0x${hexAddr}`;
+
+                                if (g.type === 'string_ptr') {
+                                    // ZX Basic String variable: 2-byte LE pointer at addrNum
+                                    // → points to: [2 bytes LE length][N bytes chars]
+                                    const ptrBytes = await this._readMemoryZesarux(addrNum, 2);
+                                    if (ptrBytes && ptrBytes.length === 2) {
+                                        const ptr = ptrBytes[0] + (ptrBytes[1] << 8);
+                                        if (ptr === 0) {
+                                            display = `""`;
+                                        } else {
+                                            const lenBytes = await this._readMemoryZesarux(ptr, 2);
+                                            if (lenBytes && lenBytes.length === 2) {
+                                                const len = lenBytes[0] + (lenBytes[1] << 8);
+                                                if (len === 0) {
+                                                    display = `""`;
+                                                } else if (len > 0 && len <= 1024) {
+                                                    const strBytes = await this._readMemoryZesarux(ptr + 2, len);
+                                                    if (strBytes) {
+                                                        const str = strBytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+                                                        display = `"${str}"`;
+                                                    } else {
+                                                        display = `"" (ptr=0x${ptr.toString(16).toUpperCase()})`;
+                                                    }
+                                                } else {
+                                                    display = `"" (len=${len} out of range)`;
+                                                }
+                                            } else {
+                                                display = `ptr=0x${ptr.toString(16).toUpperCase()}`;
+                                            }
+                                        }
                                     } else {
-                                        display = `${g.type} ${bytes.map(b => b.toString(16).padStart(2,'0')).join(' ')} (len=${bytes.length})`;
+                                        display = `string_ptr @ 0x${hexAddr}`;
                                     }
                                 } else {
-                                    display = `${g.type} addr=0x${hexAddr}`;
+                                    // Attempt to read memory from emulator
+                                    const bytes = await this._readMemoryZesarux(addrNum, Math.max(1, Math.min(g.size || 1, 256)));
+                                    if (bytes && bytes.length > 0) {
+                                        if (g.type === 'byte' || (g.size === 1)) {
+                                            display = `${bytes[0]} (0x${bytes[0].toString(16).toUpperCase()})`;
+                                        } else if (g.type === 'word' || (g.size === 2)) {
+                                            const lo = bytes[0] || 0;
+                                            const hi = bytes[1] || 0;
+                                            const val = lo + (hi << 8);
+                                            display = `${val} (0x${val.toString(16).toUpperCase()})`;
+                                        } else if (g.type === 'string') {
+                                            const chars = bytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+                                            display = `"${chars}"`;
+                                        } else if (g.type === 'reserve') {
+                                            display = `reserve ${g.size} bytes @ 0x${hexAddr}`;
+                                        } else {
+                                            display = `${bytes.map(b => b.toString(16).padStart(2,'0')).join(' ')} (len=${bytes.length})`;
+                                        }
+                                    } else {
+                                        display = `${g.type} @ 0x${hexAddr}`;
+                                    }
                                 }
                             } else {
                                 display = `${g.type} (addr unknown)`;
