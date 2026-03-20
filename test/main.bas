@@ -1,4 +1,6 @@
+#include <putchars.bas> 
 #include "lib/functions.bas"
+#include "sprite.bas"
 
 Dim person1 As String = "Pepe"
 Dim person2 As String = "Luis"
@@ -19,6 +21,8 @@ Else
 End If
 
 Print "Hello, Antonio!"
+
+Putchars(0, 10, 3, 3, @sprite0(0))
 
 Sub greetUser(name As String)
     Print "Hello, " + name + "!"
