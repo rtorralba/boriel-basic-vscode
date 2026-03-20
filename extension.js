@@ -113,7 +113,7 @@ function compileBorielBasic(options = {}) {
             `-H=${heapSize}`,
             effectiveIncludeBasicLoader ? '-B' : '',
             effectiveAutorun ? '-a' : '',
-            effectiveOutputFormat === 'tap' ? '-t' : '-T',
+            effectiveOutputFormat === 'tap' ? '--output-format=tap' : '-T',
         ].filter(arg => arg !== '');
 
         const command = `${bin} ${args.join(' ')} "${sourceFilePath}" -o "${outputFile}"`;
