@@ -1,4 +1,4 @@
-#include <putchars.bas> 
+#include <putchars.bas>
 #include "lib/functions.bas"
 #include "sprite.bas"
 
