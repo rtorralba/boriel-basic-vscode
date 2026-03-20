@@ -190,8 +190,22 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             const programDir = path.dirname(program);
             const workspaceDir = path.dirname(programDir);
             const debugDir = path.join(workspaceDir, '.debug');
-            if (!fs.existsSync(debugDir)) {
-                fs.mkdirSync(debugDir, { recursive: true });
+            // Borrar completamente la carpeta .debug si existe (incluye subcarpetas)
+            try {
+                if (fs.existsSync(debugDir)) {
+                    fs.rmSync(debugDir, { recursive: true, force: true });
+                    this.sendEvent(new OutputEvent(`[Debug] Carpeta .debug eliminada previamente: ${debugDir}\n`));
+                }
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] No se pudo limpiar .debug: ${e.message}\n`, 'stderr'));
+            }
+            // Crear carpeta .debug vacía
+            try {
+                if (!fs.existsSync(debugDir)) {
+                    fs.mkdirSync(debugDir, { recursive: true });
+                }
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] No se pudo crear .debug: ${e.message}\n`, 'stderr'));
             }
             const baseName = path.basename(program, '.tap');
             
@@ -277,16 +291,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     this.sendEvent(new OutputEvent(`[Debug] Pre-procesando archivos .bas del proyecto...\n`));
                     
                     try {
-                        // Buscar todos los archivos .bas en el workspace (excepto .debug)
-                        const allBasFiles = this._findAllBasFiles(workspaceDir, debugDir);
-                        this.sendEvent(new OutputEvent(`[Debug] Encontrados ${allBasFiles.length} archivos .bas para preprocesar\n`));
-                        
+                        // Buscar solo los archivos .bas a partir del main (siguiendo includes),
+                        // en lugar de procesar todos los .bas del workspace.
+                        const collectedBas = this._collectBasFilesFromMain(mainBas, workspaceDir);
+                        this.sendEvent(new OutputEvent(`[Debug] Encontrados ${collectedBas.length} archivos .bas referenciados para preprocesar\n`));
+
                         // Preprocesar cada archivo manteniendo la estructura de carpetas
-                        for (const basFile of allBasFiles) {
+                        for (const basFile of collectedBas) {
                             this._preprocessBasFile(basFile, workspaceDir, debugDir);
                         }
-                        
-                        this.sendEvent(new OutputEvent(`[Debug] ✓ Pre-procesado completado para todos los archivos\n`));
+
+                        this.sendEvent(new OutputEvent(`[Debug] ✓ Pre-procesado completado para archivos referenciados\n`));
                     } catch (preErr) {
                         this.sendEvent(new OutputEvent(`[Debug] ⚠ Error pre-procesando: ${preErr.message}\n`, 'stderr'));
                         this.sendEvent(new OutputEvent(`[Debug] Continuando con compilación...\n`));
@@ -370,10 +385,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Start ZEsarUX WITHOUT tape so we can set breakpoints first,
             // then use smartload command to load and run the program.
             const zesaruxArgs = [
+                '--noconfigfile',
                 '--enable-remoteprotocol',
                 '--remoteprotocol-port', String(debugPort),
-                '--noconfigfile',
                 '--machine', '128k',
+                '--no-realvideo',
                 '--verbose', '0'
             ];
 
@@ -428,48 +444,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
 
             this.sendEvent(new OutputEvent(`[Debug] Conexión exitosa, continuando con inicialización...\n`));
-
-            // Habilitar breakpoints PRIMERO (requerido por ZEsarUX antes de cargar código fuente)
-            try { 
-                await this._ensureBreakpointsEnabled();
-                if (this._breakpointsEnabled) {
-                    this.sendEvent(new OutputEvent(`[Debug] Breakpoints habilitados correctamente\n`));
-                } else {
-                    this.sendEvent(new OutputEvent(`[Debug] ⚠ Los breakpoints NO se pudieron habilitar\n`));
-                }
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] No se pudieron habilitar breakpoints: ${e.message}\n`));
-            }
-
-            // Cargar el archivo .asm si existe (después de habilitar breakpoints)
-            this.sendEvent(new OutputEvent(`[Debug] Intentando cargar símbolos...\n`));
             this.sendEvent(new OutputEvent(`[Debug] asmFile = ${asmFile}\n`));
             this.sendEvent(new OutputEvent(`[Debug] existe? = ${asmFile ? fs.existsSync(asmFile) : 'N/A'}\n`));
-            
-            if (asmFile && fs.existsSync(asmFile) && this._breakpointsEnabled) {
-                this.sendEvent(new OutputEvent(`\n=== Cargando símbolos desde: ${asmFile} ===\n`));
-                try {
-                    // Convertir rutas de Windows a forward slashes para ZEsarUX
-                    const asmFileNormalized = asmFile.replace(/\\/g, '/');
-                    await this._sendCommand(`load-source-code ${asmFileNormalized}`);
-                    this.sendEvent(new OutputEvent(`✓ Símbolos cargados correctamente\n\n`));
-                } catch (err) {
-                    this.sendEvent(new OutputEvent(`⚠ No se pudieron cargar los símbolos: ${err.message}\n\n`));
-                }
-            } else if (asmFile && fs.existsSync(asmFile) && !this._breakpointsEnabled) {
-                this.sendEvent(new OutputEvent(`⚠ No se pueden cargar símbolos: breakpoints no habilitados en ZEsarUX\n\n`));
-            } else {
-                this.sendEvent(new OutputEvent(`⚠ No se encontró archivo .asm para depuración simbólica\n\n`));
-            }
-
-            // Instalar breakpoints pendientes INMEDIATAMENTE
-            // (antes de que el TAP empiece a ejecutarse automáticamente)
-            try { 
-                await this._flushPendingBreakpoints(); 
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoints pendientes instalados\n`));
-            } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] No se pudieron instalar breakpoints pendientes: ${e.message}\n`));
-            }
+            // La secuencia enter-cpu-step → enable-breakpoints → load-source-code → set-breakpoint
+            // → smartload → run se ejecuta completamente dentro de _tryPlayTapeThenRun.
+            // Los breakpoints pendientes también se instalan allí, una vez habilitados.
 
             // Pausar en la entrada si está configurado
             if (stopOnEntry) {
@@ -537,58 +516,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 // guardar la dirección de entrada en la sesión para que otras rutinas la conozcan
                 this._entryAddr = entryAddr;
 
-                if (entryAddr !== null && entryAddr !== 0) {
-                    // Intentar establecer breakpoint y ejecutar.
-                    try {
-                        const hexNoPrefix = entryAddr.toString(16).toUpperCase();
-                        const addrToken = `${hexNoPrefix}H`;
-                        try { await this._ensureBreakpointsEnabled(); } catch (e) {}
-                        
-                        // Use set-breakpoint 2 for entry point (slot 1 is reserved for step-over sequence)
-                        const cmd = `set-breakpoint 2 PC=${hexNoPrefix}H`;
-                        this.sendEvent(new OutputEvent(`> ${cmd}\n`, 'console'));
-                        const resp = await this._sendCommandAndWait(cmd);
-                        const lower = String(resp || '').toLowerCase();
-                        
-                        if (lower.includes('unknown command') || lower.includes('error')) {
-                            this.sendEvent(new OutputEvent(`[Debug] set-breakpoint no soportado, usando fallback\n`));
-                            // fallback to legacy
-                            await this._sendCommand(`break set ${hexNoPrefix}H`);
-                        }
-                        
-                        this.sendEvent(new OutputEvent(`[Debug] Breakpoint establecido en ${addrToken}, cargando y ejecutando hasta entrada...\n`));
-                        
-                        // Reproducir la cinta y ejecutar hasta que PC alcance entryAddr
-                        await this._tryPlayTapeThenRun(entryAddr);
-                        // El adaptador seguirá escuchando la salida y debe detectar el hit del breakpoint
-                    } catch (e) {
-                        this.sendEvent(new OutputEvent(`[Debug] Falló la estrategia de breakpoint en entrada: ${e.message}\n`, 'stderr'));
-                        // Fallback a la estrategia previa (enter-cpu-step + auto-step)
-                        try {
-                            await this._sendCommandAndWait('enter-cpu-step');
-                            try {
-                                this.sendEvent(new OutputEvent(`[Debug] Ejecutando un paso automático (cpu-step) para posicionar el PC...\n`));
-                                await this._sendCommandAndWait('cpu-step');
-                            } catch (inner) {
-                                this.sendEvent(new OutputEvent(`[Debug] Falló el step automático: ${inner.message}\n`, 'stderr'));
-                            }
-                        } catch (enterErr) {
-                            this.sendEvent(new OutputEvent(`[Debug] No se pudo entrar en modo step: ${enterErr.message}\n`, 'stderr'));
-                        }
-                    }
-                } else {
-                    // No tenemos dirección de entrada: fallback a enter-cpu-step
-                    try {
-                        await this._sendCommandAndWait('enter-cpu-step');
-                        try {
-                            this.sendEvent(new OutputEvent(`[Debug] Ejecutando un paso automático (cpu-step) para posicionar el PC...\n`));
-                            await this._sendCommandAndWait('cpu-step');
-                        } catch (e) {
-                            this.sendEvent(new OutputEvent(`[Debug] Falló el step automático: ${e.message}\n`, 'stderr'));
-                        }
-                    } catch (enterErr) {
-                        this.sendEvent(new OutputEvent(`[Debug] No se pudo entrar en modo step: ${enterErr.message}\n`, 'stderr'));
-                    }
+                // Delegar TODA la secuencia de inicio a _tryPlayTapeThenRun:
+                //   enter-cpu-step → enable-breakpoints → load-source-code
+                //   → set-breakpoint → smartload → run
+                // Así evitamos enviar comandos al socket antes de estar en cpu-step,
+                // lo que causaba timeouts y desincronización de respuestas.
+                try {
+                    await this._tryPlayTapeThenRun(entryAddr);
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] Error en _tryPlayTapeThenRun: ${e.message}\n`, 'stderr'));
                 }
 
                     this._stopped = true;
@@ -1077,6 +1013,107 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     /**
+     * Recolecta recursivamente solo los archivos .bas empezando por el archivo principal
+     * y siguiendo directivas de inclusión (#include "file" / #include <file> / INCLUDE ...).
+     * Devuelve rutas absolutas a los archivos existentes.
+     */
+    _collectBasFilesFromMain(startFile, workspaceDir) {
+        const collected = [];
+        const visited = new Set();
+
+        const resolveIncludeCandidates = (includeName, currentDir) => {
+            const candidates = [];
+            if (path.isAbsolute(includeName)) candidates.push(includeName);
+            // try relative to current file
+            candidates.push(path.join(currentDir, includeName));
+            // try relative to workspace root
+            candidates.push(path.join(workspaceDir, includeName));
+            // also try with .bas extension if omitted
+            if (!includeName.toLowerCase().endsWith('.bas')) {
+                candidates.push(path.join(currentDir, includeName + '.bas'));
+                candidates.push(path.join(workspaceDir, includeName + '.bas'));
+            }
+            return candidates;
+        };
+
+        const includeRegex1 = /#include\s+["<]([^">]+)[">]/i;
+        const includeRegex2 = /\bINCLUDE\b\s+["']?([^"'\s]+)["']?/i;
+
+        const walk = (filePath) => {
+            try {
+                if (!filePath) return;
+                const normalized = path.normalize(filePath);
+                if (visited.has(normalized)) return;
+                visited.add(normalized);
+
+                if (!fs.existsSync(normalized)) return;
+                if (!normalized.toLowerCase().endsWith('.bas')) return;
+
+                collected.push(normalized);
+
+                const content = fs.readFileSync(normalized, 'utf8');
+                const lines = content.split('\n');
+                const currentDir = path.dirname(normalized);
+
+                for (const ln of lines) {
+                    let m = ln.match(includeRegex1);
+                    if (!m) m = ln.match(includeRegex2);
+                    if (m && m[1]) {
+                        const incName = m[1].trim();
+                        const candidates = resolveIncludeCandidates(incName, currentDir);
+                        let found = null;
+                        for (const cand of candidates) {
+                            if (fs.existsSync(cand)) { found = cand; break; }
+                        }
+                        if (found) {
+                            walk(found);
+                        } else {
+                            // no encontrado: intentar buscar en workspace recursivamente por nombre base
+                            const basename = path.basename(incName);
+                            try {
+                                const matches = this._findWorkspaceFilesByName(workspaceDir, basename);
+                                if (matches.length > 0) walk(matches[0]);
+                                else this.sendEvent(new OutputEvent(`[Debug] ⚠ Include no encontrado: ${incName} (referenciado desde ${normalized})\n`, 'stderr'));
+                            } catch (e) {
+                                this.sendEvent(new OutputEvent(`[Debug] ⚠ Error buscando include ${incName}: ${e.message}\n`, 'stderr'));
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        };
+
+        walk(startFile);
+        return collected;
+    }
+
+    /**
+     * Helper: busca recursivamente dentro del workspace el primer archivo que coincida
+     * por nombre de fichero (basename). Devuelve array de coincidencias absolutas.
+     */
+    _findWorkspaceFilesByName(workspaceDir, name) {
+        const results = [];
+        const search = (dir) => {
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (entry.name === '.debug') continue;
+                        search(full);
+                    } else if (entry.isFile() && entry.name === name) {
+                        results.push(full);
+                    }
+                }
+            } catch (e) {}
+        };
+        search(workspaceDir);
+        return results;
+    }
+
+    /**
      * Pre-procesa un archivo .bas individual, añadiendo marcadores __BASLINE
      * y guardándolo en .debug manteniendo la estructura de carpetas
      */
@@ -1320,58 +1357,82 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 return;
             }
             
-            // IMPORTANT: Enter step mode BEFORE smartload
-            // This prevents ZEsarUX from opening its debugger UI
-            this.sendEvent(new OutputEvent(`[Debug] Entrando en modo step...\n`));
+            // Secuencia recomendada por el autor de ZEsarUX:
+            // 1) enter-cpu-step   → pone el emulador en modo paso a paso
+            // 2) enable-breakpoints → ahora sí responde correctamente
+            // 3) load-source-code  → carga los marcadores de línea del ASM
+            // 4) set-breakpoint    → establece el breakpoint de entrada
+            // 5) smartload         → carga el TAP (mantiene el modo step)
+            // 6) run               → ejecuta hasta el breakpoint
+
+            this.sendEvent(new OutputEvent(`[Debug] PASO 1: Entrando en modo step...\n`));
             const stepResp = await this._sendCommandAndWait('enter-cpu-step');
-            this.sendEvent(new OutputEvent(`[Debug] enter-cpu-step response: ${String(stepResp).replace(/\n/g,' ')}\n`));
-            
-            // Wait a bit for step mode to be established
+            this.sendEvent(new OutputEvent(`[Debug] enter-cpu-step: ${String(stepResp).replace(/\n/g,' ')}\n`));
             await this._waitForZesarux(300);
-            
-            // Re-enable breakpoints after enter-cpu-step (it disables them)
-            this.sendEvent(new OutputEvent(`[Debug] Re-habilitando breakpoints después de enter-cpu-step...\n`));
-            this._breakpointsEnabled = false; // Force re-enable
+
+            this.sendEvent(new OutputEvent(`[Debug] PASO 2: Habilitando breakpoints...\n`));
+            this._breakpointsEnabled = false;
             try {
                 await this._ensureBreakpointsEnabled();
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints: ${this._breakpointsEnabled ? '✓ habilitados' : '✗ no habilitados'}\n`));
             } catch (e) {
-                this.sendEvent(new OutputEvent(`[Debug] Advertencia al re-habilitar breakpoints: ${e.message}\n`));
+                this.sendEvent(new OutputEvent(`[Debug] ⚠ enable-breakpoints falló: ${e.message}\n`, 'stderr'));
             }
-            
-            // Now execute smartload - it will stay in step mode
-            // Convertir rutas de Windows a forward slashes para ZEsarUX
+
+            // PASO 3: Cargar símbolos del ASM
+            const asmFileForLoad = this._asmFile;
+            if (asmFileForLoad && fs.existsSync(asmFileForLoad)) {
+                const asmFileNormalized = asmFileForLoad.replace(/\\/g, '/');
+                this.sendEvent(new OutputEvent(`[Debug] PASO 3: Cargando símbolos: ${asmFileNormalized}\n`));
+                try {
+                    const lscResp = await this._sendCommandAndWait(`load-source-code ${asmFileNormalized}`);
+                    const lscStr = String(lscResp || '').trim();
+                    if (lscStr.toLowerCase().includes('error')) {
+                        this.sendEvent(new OutputEvent(`[Debug] ⚠ load-source-code respondió: ${lscStr}\n`, 'stderr'));
+                    } else {
+                        this.sendEvent(new OutputEvent(`[Debug] ✓ Símbolos cargados: ${lscStr}\n`));
+                    }
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] ⚠ load-source-code falló: ${e.message}\n`, 'stderr'));
+                }
+            } else {
+                this.sendEvent(new OutputEvent(`[Debug] PASO 3: Sin ASM que cargar (${asmFileForLoad || 'no definido'})\n`));
+            }
+
+            // PASO 3b: Instalar breakpoints pendientes del usuario (ahora que están habilitados)
+            try {
+                await this._flushPendingBreakpoints();
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints pendientes instalados\n`));
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints pendientes no instalados: ${e.message}\n`, 'stderr'));
+            }
+
+            // PASO 4: Establecer breakpoint de entrada
             const tapPathNormalized = tapPath.replace(/\\/g, '/');
-            this.sendEvent(new OutputEvent(`[Debug] Ejecutando smartload (permanecerá en step mode)...\n`));
-            const smartloadResp = await this._sendCommandAndWait(`smartload ${tapPathNormalized}`);
-            const smartloadRespStr = String(smartloadResp).replace(/\n/g,' ');
-            this.sendEvent(new OutputEvent(`[Debug] smartload response: ${smartloadRespStr}\n`));
-            
-            // Check if smartload succeeded
-            if (smartloadRespStr.toLowerCase().includes('error')) {
-                this.sendEvent(new OutputEvent(`[Debug] smartload reportó error\n`, 'stderr'));
-                throw new Error('smartload failed: ' + smartloadRespStr);
-            }
-            
-            // Wait for smartload to complete
-            await this._waitForZesarux(500);
-            
-            // Re-establish breakpoint after smartload (it may have been cleared)
             if (targetAddr && targetAddr !== 0) {
                 const hexNoPrefix = targetAddr.toString(16).toUpperCase();
-                this.sendEvent(new OutputEvent(`[Debug] Estableciendo breakpoint en ${hexNoPrefix}H después de smartload...\n`));
+                this.sendEvent(new OutputEvent(`[Debug] PASO 4: Estableciendo breakpoint en ${hexNoPrefix}H...\n`));
                 try {
                     const cmd = `set-breakpoint 2 PC=${hexNoPrefix}H`;
                     const resp = await this._sendCommandAndWait(cmd);
                     const lower = String(resp || '').toLowerCase();
                     if (lower.includes('unknown command') || lower.includes('error')) {
-                        // fallback to legacy
                         await this._sendCommand(`break set ${hexNoPrefix}H`);
                     }
-                    this.sendEvent(new OutputEvent(`[Debug] Breakpoint re-establecido en ${hexNoPrefix}H\n`));
+                    this.sendEvent(new OutputEvent(`[Debug] ✓ Breakpoint en ${hexNoPrefix}H\n`));
                 } catch (e) {
-                    this.sendEvent(new OutputEvent(`[Debug] Advertencia al establecer breakpoint: ${e.message}\n`));
+                    this.sendEvent(new OutputEvent(`[Debug] ⚠ Breakpoint falló: ${e.message}\n`));
                 }
             }
+
+            this.sendEvent(new OutputEvent(`[Debug] PASO 5: Ejecutando smartload...\n`));
+            const smartloadResp = await this._sendCommandAndWait(`smartload ${tapPathNormalized}`);
+            const smartloadRespStr = String(smartloadResp).replace(/\n/g,' ');
+            this.sendEvent(new OutputEvent(`[Debug] smartload: ${smartloadRespStr}\n`));
+            if (smartloadRespStr.toLowerCase().includes('error')) {
+                throw new Error('smartload failed: ' + smartloadRespStr);
+            }
+            await this._waitForZesarux(300);
             
             // Now run - this will execute until it hits our breakpoint
             this.sendEvent(new OutputEvent(`[Debug] Ejecutando run (se detendrá en breakpoint)...\n`));
@@ -1400,7 +1461,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
      * Envía un comando y espera una respuesta de ZEsarUX antes de continuar.
      * Útil para comandos como enter-cpu-step donde queremos sincronización real.
      */
-    async _sendCommandAndWait(command) {
+    async _sendCommandAndWait(command, timeoutMs = 5000) {
+        // ZEsarUX ZRCP ends every response with a "command>" or "command@cpu-step>" prompt.
+        // We accumulate data until we see that prompt, then resolve with the accumulated text.
         return new Promise((resolve, reject) => {
             if (!this._debugSocket || this._debugSocket.destroyed) {
                 reject(new Error('No hay conexión con ZEsarUX'));
@@ -1408,34 +1471,50 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
             this.sendEvent(new OutputEvent(`> ${command}\n`, 'console'));
             let resolved = false;
-            const dataListener = (data) => {
-                try {
-                    const txt = data.toString();
-                    this.sendEvent(new OutputEvent(`< ${txt}`, 'console'));
-                    if (!resolved) {
-                        resolved = true;
-                        this._debugSocket.removeListener('data', dataListener);
-                        
-                        // Actualizar PC si la respuesta contiene información de registros
-                        const pcMatch = txt.match(/PC=([0-9A-Fa-f]{1,4})/);
-                        if (pcMatch) {
-                            const pc = parseInt(pcMatch[1], 16);
-                            if (pc !== this._lastPC) {
-                                this._previousPC = this._lastPC;
-                                this._lastPC = pc;
-                            }
-                        }
-                        
-                        resolve(txt);
-                    }
-                } catch (e) {
-                    if (!resolved) {
-                        resolved = true;
-                        this._debugSocket.removeListener('data', dataListener);
-                        resolve('');
+            let accumulated = '';
+            // Regex that matches the ZRCP command prompt at end of response
+            const promptRe = /command(?:@[^\n>]*)?>[ \t]*$/m;
+
+            const finish = (txt) => {
+                if (resolved) return;
+                resolved = true;
+                clearTimeout(timer);
+                try { this._debugSocket.removeListener('data', dataListener); } catch (e) {}
+                // Extract meaningful content: everything before the final prompt line
+                const clean = txt.replace(/command(?:@[^\n>]*)?>[ \t]*$/m, '').trim();
+                if (clean) this.sendEvent(new OutputEvent(`< ${clean}\n`, 'console'));
+                // Actualizar PC si la respuesta contiene información de registros
+                const pcMatch = txt.match(/PC=([0-9A-Fa-f]{1,4})/);
+                if (pcMatch) {
+                    const pc = parseInt(pcMatch[1], 16);
+                    if (pc !== this._lastPC) {
+                        this._previousPC = this._lastPC;
+                        this._lastPC = pc;
                     }
                 }
+                resolve(clean || txt);
             };
+
+            const dataListener = (data) => {
+                try {
+                    accumulated += data.toString();
+                    // Resolve as soon as we see the end-of-response prompt
+                    if (promptRe.test(accumulated)) {
+                        finish(accumulated);
+                    }
+                } catch (e) {
+                    if (!resolved) finish('');
+                }
+            };
+
+            // Timeout fallback – resolve with whatever we have accumulated
+            const timer = setTimeout(() => {
+                if (!resolved) {
+                    this.sendEvent(new OutputEvent(`< (timeout: ${JSON.stringify(accumulated.slice(0,80))})\n`, 'console'));
+                    finish(accumulated);
+                }
+            }, timeoutMs);
+
             this._debugSocket.on('data', dataListener);
             this._debugSocket.write(command + '\n');
         });
@@ -1853,17 +1932,23 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async _ensureBreakpointsEnabled() {
         if (this._breakpointsEnabled) return;
         if (!this._debugSocket || this._debugSocket.destroyed) return;
-        
-        // Simplemente enviar el comando y asumir éxito
-        this.sendEvent(new OutputEvent(`> enable-breakpoints\n`, 'console'));
-        this._debugSocket.write('enable-breakpoints\n');
-        
-        // Dar tiempo a que ZEsarUX procese el comando
-        await new Promise(r => setTimeout(r, 200));
-        
-        // Asumir que funcionó (si no funciona, load-source-code fallará)
-        this._breakpointsEnabled = true;
-        this.sendEvent(new OutputEvent(`✓ Comando enable-breakpoints enviado\n`));
+        try {
+            // Intentar con send+wait para capturar respuesta
+            this.sendEvent(new OutputEvent(`> enable-breakpoints\n`, 'console'));
+            const resp = await this._sendCommandAndWait('enable-breakpoints');
+            const txt = String(resp || '').toLowerCase();
+            if (txt.includes('unknown command') || txt.includes('not found') || txt.includes('error')) {
+                this._breakpointsEnabled = false;
+                this.sendEvent(new OutputEvent(`✗ enable-breakpoints no soportado o falló: ${String(resp).replace(/\n/g,' ')}\n`, 'stderr'));
+            } else {
+                this._breakpointsEnabled = true;
+                this.sendEvent(new OutputEvent(`✓ Breakpoints habilitados: ${String(resp).replace(/\n/g,' ')}\n`));
+            }
+        } catch (e) {
+            // Si sendAndWait falló, caer en fallback conservador
+            this._breakpointsEnabled = false;
+            this.sendEvent(new OutputEvent(`✗ No se pudo confirmar enable-breakpoints: ${e.message}\n`, 'stderr'));
+        }
     }
 
     /**

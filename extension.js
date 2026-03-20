@@ -35,6 +35,17 @@ function compileBorielBasic(options = {}) {
             ? vscode.workspace.workspaceFolders[0].uri.fsPath
             : process.cwd();
 
+        // Limpiar carpeta .debug en cada compilación para evitar residuos de sesiones anteriores
+        try {
+            const debugDir = path.join(workspaceFolder, '.debug');
+            if (fs.existsSync(debugDir)) {
+                fs.rmSync(debugDir, { recursive: true, force: true });
+                console.log('[Compilación] Carpeta .debug limpiada');
+            }
+        } catch (e) {
+            console.error('[Compilación] No se pudo limpiar .debug:', e);
+        }
+
         // Determinar el archivo fuente a usar
         const editor = vscode.window.activeTextEditor;
         let sourceFilePath = null;
@@ -555,12 +566,18 @@ function activate(context) {
 
     // Registrar comando para lanzar ZEsarUX
     const launchZesaruxCommand = vscode.commands.registerCommand('borielBasic.launchZesarux', (config) => {
-        // Leer configuración desde argumentos o usar valores por defecto
-        const zesaruxPath = config?.zesaruxPath || '/home/raul/bin/zesarux/zesarux';
+        // Leer zesaruxPath desde los argumentos del comando (que vienen del launch.json)
+        // Si no se pasa directamente, buscar la config borielbasic activa en launch.json
+        let zesaruxPath = config?.zesaruxPath;
+        if (!zesaruxPath) {
+            const launchConfigs = vscode.workspace.getConfiguration('launch').get('configurations') || [];
+            const borielConfig = launchConfigs.find(c => c.type === 'borielbasic');
+            zesaruxPath = borielConfig?.zesaruxPath;
+        }
         const debugPort = config?.debugPort || 10000;
         const program = config?.program;
         if (!zesaruxPath || !program) {
-            vscode.window.showErrorMessage('No se ha especificado la ruta de ZEsarUX o el archivo .tap.');
+            vscode.window.showErrorMessage('No se ha especificado la ruta de ZEsarUX o el archivo .tap. Configura "zesaruxPath" en tu launch.json.');
             return;
         }
         const zesaruxCmd = `${zesaruxPath} --enable-remoteprotocol --remoteprotocol-port=${debugPort} --noconfigfile --machine 128k --no-realvideo --tape ${program}`;
