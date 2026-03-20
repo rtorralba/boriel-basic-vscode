@@ -1189,8 +1189,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             const sourceLines = sourceContent.split('\n');
             const preprocessedLines = [];
             
-            // Tokens que representan sentencias que no generan código ejecutable propio
-            const FLOW_TOKENS = new Set(['IF','ELSE','END','FOR','WHILE','DO','LOOP','GOTO','GOSUB','RETURN','NEXT','UNTIL','SELECT','CASE','THEN','DIM','SUB','FUNCTION']);
+            // Tokens que representan sentencias puramente estructurales/declarativas
+            // que NO generan código Z80 propio y no deben recibir marcador de línea.
+            // Los tokens ejecutables (IF, FOR, WHILE, GOTO, RETURN…) SÍ generan código
+            // y deben recibir marcador para que el debugger pueda parar en ellos.
+            const FLOW_TOKENS = new Set(['ELSE','END','THEN','DIM','SUB','FUNCTION']);
 
             // Generar nombre de archivo para las etiquetas usando la ruta relativa completa
             // Formato: BAS___lineNumber___filename donde:
