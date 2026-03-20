@@ -1228,9 +1228,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             
             // Tokens que representan sentencias puramente estructurales/declarativas
             // que NO generan código Z80 propio y no deben recibir marcador de línea.
-            // Los tokens ejecutables (IF, FOR, WHILE, GOTO, RETURN…) SÍ generan código
-            // y deben recibir marcador para que el debugger pueda parar en ellos.
-            const FLOW_TOKENS = new Set(['ELSE','END','THEN','DIM','SUB','FUNCTION']);
+            // DIM se trata aparte: sin inicializador no genera código, con = sí.
+            const FLOW_TOKENS = new Set(['ELSE','END','THEN','SUB','FUNCTION']);
 
             // Generar nombre de archivo para las etiquetas usando la ruta relativa completa
             // Formato: BAS___lineNumber___filename donde:
@@ -1249,7 +1248,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
                 const isPreprocessor = trimmedLine.startsWith('#');
                 const isComment = trimmedLine.startsWith("'") || trimmedLine.toUpperCase().startsWith('REM ');
-                if (trimmedLine && !isComment && !isPreprocessor && !FLOW_TOKENS.has(firstToken)) {
+                // DIM sin inicializador (sin =) es solo una declaración, no genera código
+                const isDimNoInit = firstToken === 'DIM' && !trimmedLine.includes('=');
+                if (trimmedLine && !isComment && !isPreprocessor && !isDimNoInit && !FLOW_TOKENS.has(firstToken)) {
                     
                     // Añadir marcador ANTES de la línea de código
                     // Formato: BAS___lineNumber___filename
@@ -3141,14 +3142,15 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
     scopesRequest(response, args) {
         const scopes = [
-            new Scope("Registros", this._variableHandles.create("registers"), false),
-            new Scope("Memoria", this._variableHandles.create("memory"), false)
+            new Scope("Registros", this._variableHandles.create("registers"), true),  // collapsed
+            new Scope("Memoria",   this._variableHandles.create("memory"),    true)   // collapsed
         ];
 
-        // Add Globals scope if we have detected global variables
+        // Add Globals scope if we have detected user variables (starting with _)
         try {
-            if (this._globalVariables && this._globalVariables.length > 0) {
-                scopes.push(new Scope("Globals", this._variableHandles.create("globals"), false));
+            const userVars = (this._globalVariables || []).filter(g => g.name.startsWith('_'));
+            if (userVars.length > 0) {
+                scopes.unshift(new Scope("Globals", this._variableHandles.create("globals"), false)); // expanded, first
             }
         } catch (e) {}
 
@@ -3181,8 +3183,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         // Globals scope: return parsed global variable descriptors (name, type, address)
         if (id === "globals") {
             try {
-                if (this._globalVariables && this._globalVariables.length > 0) {
-                    for (const g of this._globalVariables) {
+                // Only show user-defined variables: names starting with _ (strip the leading _)
+                const userVars = (this._globalVariables || []).filter(g => g.name.startsWith('_'));
+                if (userVars.length > 0) {
+                    for (const g of userVars) {
+                        const displayName = g.name.replace(/^_+/, '');
                         try {
                             let display = `${g.type}`;
                             if (g.addr) {
@@ -3248,9 +3253,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 display = `${g.type} (addr unknown)`;
                             }
 
-                            variables.push({ name: g.name, value: display, variablesReference: 0 });
+                            variables.push({ name: displayName, value: display, variablesReference: 0 });
                         } catch (inner) {
-                            variables.push({ name: g.name, value: `error: ${inner.message}`, variablesReference: 0 });
+                            variables.push({ name: displayName, value: `error: ${inner.message}`, variablesReference: 0 });
                         }
                     }
                 }
