@@ -6,16 +6,18 @@ La extensión **Boriel Basic VSCode** está diseñada para facilitar el desarrol
 
 ## Funcionalidades
 
-- **Resaltado de sintaxis**: Mejora la legibilidad del código Boriel Basic con colores específicos para palabras clave, comentarios y estructuras del lenguaje.
-- **Compilación integrada**: Compila directamente tus archivos `.bas` desde VSCode utilizando el compilador Boriel Basic.
-- **Ejecución rápida**: Ejecuta tus programas en un emulador compatible con un solo clic.
-- **Autocompletado**: Sugerencias inteligentes para comandos y funciones del lenguaje Boriel Basic.
-- **Errores en tiempo de compilación**: Visualiza errores y advertencias directamente en el editor.
-- **Soporte para proyectos**: Organiza y gestiona proyectos Boriel Basic de manera eficiente.
-- **Rename de símbolos (LSP)**: Renombra variables, funciones y etiquetas en todos los ficheros del proyecto a la vez pulsando `F2` sobre cualquier símbolo. Requiere que el Language Server esté activo.
-- **Refactor – Extract Method (LSP)**: Selecciona un bloque de código, abre el menú de refactoring (clic derecho → Refactor… o el icono de bombilla) y elige **Extract Method** para extraer el bloque a una nueva subrutina. Requiere que el Language Server soporte `textDocument/codeAction` con `refactor.extract`.
+- **Resaltado de sintaxis**: Coloreado de palabras clave, comentarios, cadenas, números y estructuras del lenguaje en archivos `.bas` y `.zxbas`. El resaltado también funciona en bloques de código Boriel Basic dentro de archivos Markdown.
+- **Compilación integrada**: Compila directamente tus archivos `.bas` desde VSCode usando el compilador Boriel Basic incluido (Windows, Linux y macOS). Genera `.tap` o `.bin` en la carpeta `dist/`. Configurable desde los ajustes de la extensión.
+- **Autocompletado (LSP)**: Sugerencias inteligentes de palabras clave, funciones, variables y símbolos definidos en el proyecto, proporcionadas por el Language Server.
+- **Ir a la definición (LSP)**: Pulsa `F12` o usa clic derecho → *Go to Definition* para saltar directamente a donde se define una variable, función o etiqueta.
+- **Buscar referencias (LSP)**: Localiza todos los usos de un símbolo en el proyecto con clic derecho → *Find All References* (`Shift+F12`).
+- **Documentación al pasar el ratón (LSP)**: Muestra documentación e información de tipo de variables y funciones al situar el cursor sobre ellas.
+- **Diagnósticos en tiempo real (LSP)**: Errores y advertencias subrayados directamente en el editor a medida que escribes, sin necesidad de compilar.
+- **Formato e indentación (LSP)**: Formatea el documento con `Shift+Alt+F`. Opcionalmente convierte las palabras clave a mayúsculas o minúsculas según la opción `borielBasic.formatKeywords`.
+- **Rename de símbolos (LSP)**: Renombra variables, funciones y etiquetas en todos los ficheros del proyecto a la vez pulsando `F2` sobre cualquier símbolo.
+- **Refactor – Extract Method (LSP)**: Selecciona un bloque de código, abre el menú de refactoring (clic derecho → Refactor… o el icono de bombilla) y elige **Extract Method** para extraer el bloque a una nueva subrutina.
 - **Exportar sprites ZXP**: Convierte archivos `.zxp` a código Boriel Basic listo para usar (clic derecho sobre el archivo → Export ZXP to Boriel Basic). Instala automáticamente la librería `zxp2boriel` en un entorno virtual Python la primera vez.
-- **Actualización del LSP**: Actualiza el servidor de lenguaje a la última versión publicada en npm mediante el comando `Boriel Basic: Update LSP` (paleta de comandos).
+- **Actualización del LSP**: Actualiza el servidor de lenguaje a la última versión publicada en npm mediante el comando `Boriel Basic: Actualizar Boriel Basic LSP` (paleta de comandos).
 - **Depuración con ZEsarUX**: Depura tus programas Boriel Basic directamente desde VSCode usando el emulador [ZEsarUX](https://github.com/chernandezba/zesarux) como backend de debug. Soporta puntos de ruptura, inspección de variables y ejecución paso a paso.
 
 ## Depuración con ZEsarUX
@@ -43,6 +45,7 @@ Para depurar un programa necesitas configurar un archivo `.vscode/launch.json` e
 | `program` | Ruta al archivo `.tap` generado por la compilación |
 | `zesaruxPath` | Ruta al ejecutable de ZEsarUX |
 | `debugPort` | Puerto del protocolo remoto de ZEsarUX (por defecto `10000`) |
+| `stopOnEntry` | Si es `true`, la ejecución se detiene automáticamente al arrancar (por defecto `true`) |
 
 **Pasos para depurar:**
 
