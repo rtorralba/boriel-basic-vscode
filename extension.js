@@ -575,6 +575,95 @@ function activate(context) {
     // Iniciar el cliente
     client.start();
 
+    // Registrar soporte de rename usando el LSP. Registramos el provider directamente
+    // (las funciones comprueban `client.state` antes de enviar solicitudes), así
+    // evitamos depender de `client.onReady()` que puede no existir en algunas versiones.
+    try {
+        const renameProvider = vscode.languages.registerRenameProvider('borielbasic', {
+            async provideRenameEdits(document, position, newName, token) {
+                if (!client || client.state !== 2) return null;
+
+                const params = {
+                    textDocument: { uri: document.uri.toString() },
+                    position: { line: position.line, character: position.character },
+                    newName
+                };
+
+                try {
+                    const result = await client.sendRequest('textDocument/rename', params);
+                    if (!result) return null;
+
+                    const workspaceEdit = new vscode.WorkspaceEdit();
+
+                    if (result.changes) {
+                        for (const uri in result.changes) {
+                            const edits = result.changes[uri];
+                            const vsUri = vscode.Uri.parse(uri);
+                            for (const e of edits) {
+                                const r = e.range;
+                                const range = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+                                workspaceEdit.replace(vsUri, range, e.newText);
+                            }
+                        }
+                    } else if (result.documentChanges) {
+                        for (const change of result.documentChanges) {
+                            if (change.textDocument && change.edits) {
+                                const uri = change.textDocument.uri;
+                                const vsUri = vscode.Uri.parse(uri);
+                                for (const e of change.edits) {
+                                    const r = e.range;
+                                    const range = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+                                    workspaceEdit.replace(vsUri, range, e.newText);
+                                }
+                            } else if (change.edits && change.uri) {
+                                const vsUri = vscode.Uri.parse(change.uri);
+                                for (const e of change.edits) {
+                                    const r = e.range;
+                                    const range = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+                                    workspaceEdit.replace(vsUri, range, e.newText);
+                                }
+                            }
+                        }
+                    }
+
+                    return workspaceEdit;
+                } catch (err) {
+                    console.error('[Boriel Basic] Error al realizar rename via LSP:', err);
+                    return null;
+                }
+            },
+
+            async prepareRename(document, position, token) {
+                if (!client || client.state !== 2) return null;
+
+                const params = {
+                    textDocument: { uri: document.uri.toString() },
+                    position: { line: position.line, character: position.character }
+                };
+
+                try {
+                    const res = await client.sendRequest('textDocument/prepareRename', params);
+                    if (!res) return null;
+
+                    if (res.range) {
+                        const r = res.range;
+                        return new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+                    } else if (res.start && res.end) {
+                        return new vscode.Range(res.start.line, res.start.character, res.end.line, res.end.character);
+                    }
+                    return null;
+                } catch (err) {
+                    return null;
+                }
+            }
+        });
+
+        context.subscriptions.push(renameProvider);
+        console.log('[Boriel Basic] RenameProvider registrado');
+    } catch (err) {
+        console.error('Error registrando RenameProvider:', err);
+    }
+
 
 
     // Registrar el comando "borielBasic.compile"
