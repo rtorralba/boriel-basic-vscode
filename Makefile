@@ -1,3 +1,7 @@
+install-vsce:
+	npm install -g vsce
+	@echo "VSCE installed."
+	
 build:
 	vsce package
 	@echo "Build completed."
