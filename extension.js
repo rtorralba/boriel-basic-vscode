@@ -664,6 +664,139 @@ function activate(context) {
         console.error('Error registrando RenameProvider:', err);
     }
 
+    // Registrar CodeActionProvider para refactor extract (Extract Method)
+    try {
+        const codeActionProvider = vscode.languages.registerCodeActionsProvider('borielbasic', {
+            async provideCodeActions(document, range, context, token) {
+                if (!client || client.state !== 2) return [];
+
+                // Forward the real VSCode context (diagnostics and 'only' kinds) to the LSP.
+                const lspDiagnostics = (context.diagnostics || []).map(d => ({
+                    range: {
+                        start: { line: d.range.start.line, character: d.range.start.character },
+                        end: { line: d.range.end.line, character: d.range.end.character }
+                    },
+                    severity: d.severity,
+                    code: d.code,
+                    source: d.source,
+                    message: d.message
+                }));
+
+                // context.only is a single CodeActionKind instance (or undefined), not an array.
+                // Use its .value to tell the LSP which action kinds we want.
+                const lspOnly = context.only && context.only.value
+                    ? [context.only.value]
+                    : undefined;
+
+                const params = {
+                    textDocument: { uri: document.uri.toString() },
+                    range: {
+                        start: { line: range.start.line, character: range.start.character },
+                        end: { line: range.end.line, character: range.end.character }
+                    },
+                    context: lspOnly ? { diagnostics: lspDiagnostics, only: lspOnly } : { diagnostics: lspDiagnostics }
+                };
+
+                try {
+                    console.log('[Boriel Basic] Solicitud codeAction params:', params);
+                    const res = await client.sendRequest('textDocument/codeAction', params);
+                    console.log('[Boriel Basic] Respuesta codeAction:', res);
+                    if (!res || !Array.isArray(res)) {
+                        if (client && client.state === 2) {
+                            vscode.window.showInformationMessage('No refactorings returned by LSP (check Extension Host logs).');
+                        }
+                        return [];
+                    }
+
+                    const actions = [];
+                    for (const item of res) {
+                        const title = item.title || (item.command && item.command.title) || 'Refactor';
+                        // Build a proper CodeActionKind instance (VS Code internals expect .value, not a plain string)
+                        let kindStr = 'refactor.extract';
+                        if (item.kind && typeof item.kind === 'string') {
+                            kindStr = item.kind;
+                        } else if (item.kind && typeof item.kind === 'object' && item.kind.value) {
+                            kindStr = item.kind.value;
+                        }
+                        const kind = new vscode.CodeActionKind(kindStr);
+                        const ca = new vscode.CodeAction(title, kind);
+
+                        // If LSP returned an edit, convert it
+                        if (item.edit) {
+                            const workspaceEdit = new vscode.WorkspaceEdit();
+                            const changes = item.edit.changes || {};
+                            const docChanges = item.edit.documentChanges || [];
+
+                            for (const uri in changes) {
+                                const edits = changes[uri];
+                                const vsUri = vscode.Uri.parse(uri);
+                                for (const e of edits) {
+                                    const r = e.range;
+                                    const range = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+                                    workspaceEdit.replace(vsUri, range, e.newText);
+                                }
+                            }
+
+                            for (const change of docChanges) {
+                                if (change.textDocument && change.edits) {
+                                    const uri = change.textDocument.uri;
+                                    const vsUri = vscode.Uri.parse(uri);
+                                    for (const e of change.edits) {
+                                        const r = e.range;
+                                        const range = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+                                        workspaceEdit.replace(vsUri, range, e.newText);
+                                    }
+                                }
+                            }
+
+                            ca.edit = workspaceEdit;
+                        }
+
+                        // If LSP returned a command, attach it
+                        if (item.command) {
+                            ca.command = {
+                                title: item.command.title,
+                                command: item.command.command,
+                                arguments: item.command.arguments
+                            };
+                        }
+
+                        // Validate minimal shape before pushing
+                        if (!ca.title) {
+                            console.warn('[Boriel Basic] Skipping CodeAction without title:', item);
+                            continue;
+                        }
+
+                        actions.push(ca);
+                    }
+
+                    // Defensive filter: ensure we only return plain objects with expected properties
+                    const validActions = actions.filter(a => {
+                        if (!a || typeof a !== 'object') return false;
+                        if (!a.title || typeof a.title !== 'string') return false;
+                        // kind must be a CodeActionKind instance (has .value string)
+                        if (a.kind !== undefined && (typeof a.kind !== 'object' || typeof a.kind.value !== 'string')) return false;
+                        return true;
+                    });
+
+                    if (validActions.length !== actions.length) {
+                        console.warn('[Boriel Basic] Some CodeActions were filtered out for being invalid.');
+                    }
+
+                    return validActions;
+                } catch (err) {
+                    console.error('[Boriel Basic] Error requesting codeAction (extract):', err);
+                    return [];
+                }
+            }
+        }, { providedCodeActionKinds: [new vscode.CodeActionKind('refactor.extract')] });
+
+        context.subscriptions.push(codeActionProvider);
+        console.log('[Boriel Basic] CodeActionProvider (refactor.extract) registrado');
+    } catch (err) {
+        console.error('Error registrando CodeActionProvider:', err);
+    }
+
 
 
     // Registrar el comando "borielBasic.compile"
