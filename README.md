@@ -12,6 +12,46 @@ La extensión **Boriel Basic VSCode** está diseñada para facilitar el desarrol
 - **Autocompletado**: Sugerencias inteligentes para comandos y funciones del lenguaje Boriel Basic.
 - **Errores en tiempo de compilación**: Visualiza errores y advertencias directamente en el editor.
 - **Soporte para proyectos**: Organiza y gestiona proyectos Boriel Basic de manera eficiente.
+- **Rename de símbolos (LSP)**: Renombra variables, funciones y etiquetas en todos los ficheros del proyecto a la vez pulsando `F2` sobre cualquier símbolo. Requiere que el Language Server esté activo.
+- **Refactor – Extract Method (LSP)**: Selecciona un bloque de código, abre el menú de refactoring (clic derecho → Refactor… o el icono de bombilla) y elige **Extract Method** para extraer el bloque a una nueva subrutina. Requiere que el Language Server soporte `textDocument/codeAction` con `refactor.extract`.
+- **Exportar sprites ZXP**: Convierte archivos `.zxp` a código Boriel Basic listo para usar (clic derecho sobre el archivo → Export ZXP to Boriel Basic). Instala automáticamente la librería `zxp2boriel` en un entorno virtual Python la primera vez.
+- **Actualización del LSP**: Actualiza el servidor de lenguaje a la última versión publicada en npm mediante el comando `Boriel Basic: Update LSP` (paleta de comandos).
+- **Depuración con ZEsarUX**: Depura tus programas Boriel Basic directamente desde VSCode usando el emulador [ZEsarUX](https://github.com/chernandezba/zesarux) como backend de debug. Soporta puntos de ruptura, inspección de variables y ejecución paso a paso.
+
+## Depuración con ZEsarUX
+
+Para depurar un programa necesitas configurar un archivo `.vscode/launch.json` en tu proyecto:
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "borielbasic",
+            "request": "launch",
+            "name": "Debug con ZEsarUX",
+            "program": "${workspaceFolder}/dist/main.tap",
+            "zesaruxPath": "/ruta/a/zesarux",
+            "debugPort": 10000
+        }
+    ]
+}
+```
+
+| Propiedad | Descripción |
+|---|---|
+| `program` | Ruta al archivo `.tap` generado por la compilación |
+| `zesaruxPath` | Ruta al ejecutable de ZEsarUX |
+| `debugPort` | Puerto del protocolo remoto de ZEsarUX (por defecto `10000`) |
+
+**Pasos para depurar:**
+
+1. Compila tu proyecto (`Ctrl+Shift+P` → `Boriel Basic: Compile`) para generar el `.tap`.
+2. Añade puntos de ruptura en tu código `.bas` haciendo clic en el margen izquierdo del editor.
+3. Pulsa `F5` o ve a la vista de Depuración (`Ctrl+Shift+D`) y selecciona la configuración `Debug con ZEsarUX`.
+4. ZEsarUX se lanzará automáticamente y la ejecución se detendrá en los breakpoints definidos.
+
+> **Nota**: ZEsarUX debe estar instalado en tu sistema. Descárgalo desde [https://github.com/chernandezba/zesarux](https://github.com/chernandezba/zesarux).
 
 ## Instalación
 
