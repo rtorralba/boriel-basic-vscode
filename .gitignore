@@ -44,3 +44,6 @@ coverage/
 venv/
 
 .debug/
+
+*.pyc
+__pycache__/
