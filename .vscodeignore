@@ -1,0 +1,16 @@
+# Ignore Python virtual environments
+venv/
+venv/**
+.venv/
+.venv/**
+env/
+env/**
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Common editor/temp files
+.vscode/
+.DS_Store
+Thumbs.db
