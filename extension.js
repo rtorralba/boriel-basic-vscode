@@ -7,6 +7,7 @@ const {
 const child_process = require('child_process');
 const fs = require('fs');
 const net = require('net');
+const https = require('https');
 
 let client;
 
@@ -146,148 +147,126 @@ function compileBorielBasic(options = {}) {
     });
 }
 
-async function findSystemPython() {
-    // Try candidates in order of preference
-    const candidates = process.platform === 'win32'
-        ? ['python', 'python3', 'py']
-        : ['python3', 'python'];
-
-    for (const cmd of candidates) {
-        try {
-            const version = await new Promise((res, rej) => {
-                child_process.exec(`${cmd} --version`, (err, stdout, stderr) => {
-                    if (err) return rej(err);
-                    res((stdout || stderr || '').trim());
-                });
-            });
-            // Must be Python 3
-            if (/python\s*3/i.test(version)) return cmd;
-        } catch (e) { /* try next */ }
-    }
-    return null;
-}
-
-async function ensureZXP2BorielInstalled(context) {
-    const venvPath = path.join(context.extensionPath, 'venv');
-    const pythonPath = process.platform === 'win32'
-        ? path.join(venvPath, 'Scripts', 'python.exe')
-        : path.join(venvPath, 'bin', 'python3');
-    const pipPath = process.platform === 'win32'
-        ? path.join(venvPath, 'Scripts', 'pip.exe')
-        : path.join(venvPath, 'bin', 'pip');
-
-    return new Promise(async (resolve, reject) => {
-        // Check if venv exists
-        if (!fs.existsSync(venvPath)) {
-            const createVenv = await vscode.window.showWarningMessage(
-                'No se ha encontrado un entorno virtual para zxp2boriel. ¿Deseas crearlo ahora?',
-                'Sí, crear',
-                'No'
-            );
-
-            if (createVenv !== 'Sí, crear') {
-                vscode.window.showInformationMessage('Operación cancelada.');
-                reject(false);
-                return;
-            }
-
-            // Detect system Python 3
-            const sysPython = await findSystemPython();
-            if (!sysPython) {
-                vscode.window.showErrorMessage(
-                    'No se encontró Python 3. Instálalo desde https://www.python.org/downloads/ ' +
-                    'y asegúrate de marcarlo en el PATH durante la instalación.'
-                );
-                reject(false);
-                return;
-            }
-
-            // Create venv
-            await vscode.window.withProgress(
-                {
-                    location: vscode.ProgressLocation.Notification,
-                    title: "Creando entorno virtual...",
-                    cancellable: false
-                },
-                async (progress) => {
-                    return new Promise((venvResolve, venvReject) => {
-                        child_process.exec(`"${sysPython}" -m venv "${venvPath}"`, (error, stdout, stderr) => {
-                            if (error) {
-                                vscode.window.showErrorMessage(`Error al crear entorno virtual: ${stderr || error.message}`);
-                                console.error('Venv creation error:', stderr);
-                                venvReject(false);
-                                reject(false);
-                                return;
-                            }
-                            console.log('Venv created successfully');
-                            venvResolve(true);
-                        });
-                    });
-                }
-            );
-        }
-
-        // Check if zxp2boriel is installed in the venv
-        child_process.exec(`"${pythonPath}" -m zxp2boriel --help`, (error, stdout, stderr) => {
-            if (!error) {
-                // Already installed
-                resolve(pythonPath);
-                return;
-            }
-
-            // Not installed, ask user if they want to install it
-            vscode.window.showWarningMessage(
-                'La librería zxp2boriel no está instalada en el entorno virtual. ¿Deseas instalarla ahora?',
-                'Sí, instalar',
-                'No'
-            ).then(async (choice) => {
-                if (choice === 'Sí, instalar') {
-                    // Install zxp2boriel in venv
-                    await vscode.window.withProgress(
-                        {
-                            location: vscode.ProgressLocation.Notification,
-                            title: "Instalando zxp2boriel...",
-                            cancellable: false
-                        },
-                        async (progress) => {
-                            return new Promise((installResolve, installReject) => {
-                                child_process.exec(`"${pipPath}" install zxp2boriel`, (installError, installStdout, installStderr) => {
-                                    if (installError) {
-                                        vscode.window.showErrorMessage(`Error al instalar zxp2boriel: ${installStderr || installError.message}`);
-                                        console.error('Installation error:', installStderr);
-                                        installReject(false);
-                                        reject(false);
-                                        return;
-                                    }
-
-                                    vscode.window.showInformationMessage('zxp2boriel instalado correctamente.');
-                                    console.log('Installation output:', installStdout);
-                                    installResolve(true);
-                                    resolve(pythonPath);
-                                });
-                            });
-                        }
-                    );
-                } else {
-                    vscode.window.showInformationMessage('Instalación cancelada. No se puede exportar sin zxp2boriel.');
-                    reject(false);
-                }
-            });
-        });
-    });
-}
+// (Removed Python detection and venv management — using native binaries instead)
 
 function getExportFormHTML(context) {
     const htmlPath = path.join(context.extensionPath, 'resources', 'export_form.html');
     return fs.readFileSync(htmlPath, 'utf-8');
 }
 
+async function ensureZXP2BorielBinary(context) {
+    const binDir = path.join(context.extensionPath, 'bin');
+    if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+
+    const platform = process.platform;
+    const targetName = platform === 'win32' ? 'zxp2boriel.exe' : (platform === 'darwin' ? 'zxp2boriel-macos' : 'zxp2boriel-linux');
+    const outPath = path.join(binDir, targetName);
+
+    if (fs.existsSync(outPath)) {
+        return outPath;
+    }
+
+    // Fetch latest release info from GitHub
+    const apiUrl = 'https://api.github.com/repos/rtorralba/zxp2boriel/releases/latest';
+    const headers = { 'User-Agent': 'vscode-extension', Accept: 'application/vnd.github.v3+json' };
+
+    const release = await new Promise((resolve, reject) => {
+        const req = https.get(apiUrl, { headers }, (res) => {
+            let data = '';
+            res.on('data', d => data += d);
+            res.on('end', () => {
+                try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+            });
+        });
+        req.on('error', reject);
+    }).catch(err => { vscode.window.showErrorMessage('No se pudo obtener la información de releases desde GitHub: ' + err.message); return null; });
+
+    if (!release || !Array.isArray(release.assets)) {
+        vscode.window.showErrorMessage('No se encontró información válida de releases en GitHub para zxp2boriel.');
+        return null;
+    }
+
+    // Choose asset by platform keywords
+    const assets = release.assets;
+    let chosen = null;
+    for (const a of assets) {
+        const n = (a.name || '').toLowerCase();
+        if (platform === 'win32' && (n.includes('win') || n.includes('windows') || n.endsWith('.exe'))) { chosen = a; break; }
+        if (platform === 'linux' && (n.includes('linux') || n.includes('x86') || n.includes('amd64') || n.includes('x86_64'))) { chosen = a; break; }
+        if (platform === 'darwin' && (n.includes('mac') || n.includes('darwin') || n.includes('macos'))) { chosen = a; break; }
+    }
+
+    if (!chosen) {
+        vscode.window.showErrorMessage('No se encontró un binario compatible para tu sistema en las releases de zxp2boriel.');
+        return null;
+    }
+
+    const downloadUrl = chosen.browser_download_url;
+    try {
+        await new Promise((resolve, reject) => {
+            const file = fs.createWriteStream(outPath, { mode: 0o755 });
+            const req = https.get(downloadUrl, { headers }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    // follow redirect
+                    https.get(res.headers.location, { headers }, (r2) => r2.pipe(file).on('finish', resolve)).on('error', reject);
+                    return;
+                }
+                if (res.statusCode !== 200) return reject(new Error('HTTP ' + res.statusCode));
+                res.pipe(file);
+                file.on('finish', () => { file.close(resolve); });
+            });
+            req.on('error', (e) => { try { fs.unlinkSync(outPath); } catch (_) {} ; reject(e); });
+        });
+        if (process.platform !== 'win32') {
+            try { fs.chmodSync(outPath, 0o755); } catch (e) { /* ignore */ }
+        }
+        vscode.window.showInformationMessage('Binario zxp2boriel descargado correctamente.');
+        return outPath;
+    } catch (err) {
+        vscode.window.showErrorMessage('Error descargando zxp2boriel: ' + (err.message || err));
+        try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
+        return null;
+    }
+}
+
+async function updateZXP2BorielBinary(context) {
+    const binDir = path.join(context.extensionPath, 'bin');
+    if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+    const platform = process.platform;
+    const targetName = platform === 'win32' ? 'zxp2boriel.exe' : (platform === 'darwin' ? 'zxp2boriel-macos' : 'zxp2boriel-linux');
+    const outPath = path.join(binDir, targetName);
+
+    const choice = await vscode.window.showWarningMessage(
+        '¿Deseas forzar la actualización del binario zxp2boriel? Se descargará la última versión desde GitHub.',
+        'Sí, actualizar', 'Cancelar'
+    );
+    if (choice !== 'Sí, actualizar') {
+        return null;
+    }
+
+    try {
+        if (fs.existsSync(outPath)) {
+            try { fs.unlinkSync(outPath); } catch (e) { console.warn('No se pudo eliminar binario antiguo:', e); }
+        }
+        const downloaded = await ensureZXP2BorielBinary(context);
+        if (downloaded) {
+            vscode.window.showInformationMessage('zxp2boriel actualizado correctamente.');
+            return downloaded;
+        }
+        return null;
+    } catch (e) {
+        vscode.window.showErrorMessage('Error actualizando zxp2boriel: ' + (e && e.message ? e.message : e));
+        console.error('updateZXP2BorielBinary error:', e);
+        return null;
+    }
+}
+
 async function exportZXPToBoriel(uri, context) {
     try {
-        // Check if zxp2boriel is installed, and install if needed
-        const pythonPath = await ensureZXP2BorielInstalled(context);
-        if (!pythonPath) {
-            return; // User cancelled or installation failed
+        // Ensure we have a native zxp2boriel binary for this OS
+        const binPath = await ensureZXP2BorielBinary(context);
+        if (!binPath) {
+            return; // User cancelled or download failed
         }
 
         const inputFile = uri.fsPath;
@@ -316,7 +295,7 @@ async function exportZXPToBoriel(uri, context) {
                         return;
 
                     case 'export':
-                        const { width, rows, cols, name, skipAttributes } = message;
+                        const { width, rows, cols, name, skipAttributes, matrix } = message;
 
                         // Ask where to save the output file
                         const outputUri = await vscode.window.showSaveDialog({
@@ -350,7 +329,11 @@ async function exportZXPToBoriel(uri, context) {
                             args.push('--no-attributes');
                         }
 
-                        const command = `"${pythonPath}" -m zxp2boriel ${args.join(' ')}`;
+                        if (matrix) {
+                            args.push('--matrix');
+                        }
+
+                        const command = `"${binPath}" ${args.join(' ')}`;
                         console.log(`Executing command: ${command}`);
 
                         // Show progress
@@ -364,20 +347,14 @@ async function exportZXPToBoriel(uri, context) {
                                 return new Promise((resolve, reject) => {
                                     child_process.exec(command, (error, stdout, stderr) => {
                                         if (error) {
-                                            vscode.window.showErrorMessage(`Error exporting ZXP: ${stderr || error.message}`);
-                                            console.error(`Error: ${stderr}`);
+                                            vscode.window.showErrorMessage(`Error al ejecutar zxp2boriel: ${stderr || error.message}`);
+                                            console.error('zxp2boriel error:', stderr || error.message);
                                             reject(error);
                                             return;
                                         }
-
                                         vscode.window.showInformationMessage(`ZXP exported successfully to ${path.basename(outputFile)}`);
                                         console.log(`Output: ${stdout}`);
-
-                                        // Open the generated file
-                                        vscode.workspace.openTextDocument(outputFile).then(doc => {
-                                            vscode.window.showTextDocument(doc);
-                                        });
-
+                                        vscode.workspace.openTextDocument(outputFile).then(doc => vscode.window.showTextDocument(doc));
                                         resolve();
                                     });
                                 });
@@ -813,6 +790,13 @@ function activate(context) {
         updateLSP(context);
     });
 
+    // (Removed Python package management commands)
+
+    // Registrar comando para forzar actualización del binario zxp2boriel
+    const updateZxpBinaryCommand = vscode.commands.registerCommand('borielBasic.updateZXP2Boriel', () => {
+        updateZXP2BorielBinary(context);
+    });
+
     // Registrar el comando "borielBasic.exportZXPToBoriel"
     const exportZXPCommand = vscode.commands.registerCommand('borielBasic.exportZXPToBoriel', (uri) => {
         exportZXPToBoriel(uri, context);
@@ -859,6 +843,7 @@ function activate(context) {
         vscode.debug.registerDebugAdapterDescriptorFactory('borielbasic', debugAdapterFactory),
         compileCommand,
         updateLSPCommand,
+        updateZxpBinaryCommand,
         exportZXPCommand,
         launchZesaruxCommand
     );

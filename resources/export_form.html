@@ -140,6 +140,12 @@
             <div class="help-text">Include or skip color attributes in the output</div>
         </div>
 
+        <div class="form-group">
+            <label for="matrix">Group tiles into matrices</label>
+            <input type="checkbox" id="matrix" name="matrix">
+            <div class="help-text">When enabled, passes <code>--matrix</code> to zxp2boriel to group tiles into matrices.</div>
+        </div>
+
         <div class="buttons">
             <button type="submit" class="btn-primary">Export</button>
             <button type="button" class="btn-secondary" id="cancelBtn">Cancel</button>
@@ -173,6 +179,7 @@
             const cols = document.getElementById('cols').value;
             const name = document.getElementById('name').value;
             const attributes = document.getElementById('attributes').value;
+            const matrix = document.getElementById('matrix') ? document.getElementById('matrix').checked : false;
 
             // Validate all fields
             let valid = true;
@@ -216,7 +223,8 @@
                 rows: parseInt(rows),
                 cols: parseInt(cols),
                 name: name,
-                skipAttributes: attributes === 'skip'
+                skipAttributes: attributes === 'skip',
+                matrix: matrix
             });
         });
 

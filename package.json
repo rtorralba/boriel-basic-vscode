@@ -23,7 +23,8 @@
     "activationEvents": [
         "onLanguage:borielbasic",
         "onDebugResolve:borielbasic",
-        "onDebugInitialConfigurations"
+        "onDebugInitialConfigurations",
+            "onCommand:borielBasic.updateZXP2Boriel"
     ],
     "main": "./extension.js",
     "contributes": {
@@ -132,6 +133,13 @@
             {
                 "command": "borielBasic.exportZXPToBoriel",
                 "title": "Export to Boriel Basic",
+                "category": "Boriel Basic"
+            }
+            ,
+            
+            {
+                "command": "borielBasic.updateZXP2Boriel",
+                "title": "Actualizar zxp2boriel (binario)",
                 "category": "Boriel Basic"
             }
         ],
