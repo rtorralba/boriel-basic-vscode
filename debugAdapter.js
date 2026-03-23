@@ -346,7 +346,16 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             // Intentar compilar AUTO siempre (si existe main.bas en el workspace)
             try {
-                const mainBas = path.join(workspaceDir, baseName + '.bas');
+                // Resolver mainBas: usar args.sourceFile si se proporcionó, si no buscar
+                // en la raíz del workspace con el baseName del TAP
+                let mainBas;
+                if (args.sourceFile) {
+                    mainBas = path.isAbsolute(args.sourceFile)
+                        ? args.sourceFile
+                        : path.join(workspaceDir, args.sourceFile);
+                } else {
+                    mainBas = path.join(workspaceDir, baseName + '.bas');
+                }
                 // If we found the original main.bas, prefer it as the source file
                 try {
                     if (fs.existsSync(mainBas)) {
@@ -405,7 +414,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     }
                     
                     // PASO 3: Compilar el ASM desde el archivo preprocesado principal (para obtener marcadores)
-                    const preprocessedMainFile = path.join(debugDir, baseName + '.bas');
+                    // Calcular la ruta relativa de mainBas dentro del workspace y replicarla en .debug/
+                    const mainBasRelative = path.relative(workspaceDir, mainBas);
+                    const preprocessedMainFile = path.join(debugDir, mainBasRelative);
                     const asmFile = path.join(debugDir, baseName + '.asm');
                     // Generate ASM from the preprocessed file using same optimization level
                     const asmCmd = `${bin} -O2 -A "${preprocessedMainFile}" -o "${asmFile}"`;
@@ -766,6 +777,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._basLineToAddress = {};
         if (!asmFile || !fs.existsSync(asmFile)) return;
 
+        // workspaceDir is the parent of the .debug folder where asmFile lives
+        const workspaceDir = path.dirname(path.dirname(asmFile));
+
         // Find original .bas source file to detect END SUB/FUNCTION and function calls
         const sourceFile = this._sourceFile;
         const endOfSubLines = new Set();
@@ -875,9 +889,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const extractedSourceFile = typeof v === 'object' ? v.sourceFile : null;
                 if (!isNaN(bas) && !isNaN(addrNum)) {
                     // Derive absolute source path for file-aware map
+                    // extractedSourceFile is relative to workspaceDir (encoded from fileLabel)
                     const mainSourceFile = this._sourceFile || null;
                     const absSourceFile = extractedSourceFile
-                        ? path.join(path.dirname(mainSourceFile || ''), extractedSourceFile)
+                        ? path.join(workspaceDir, extractedSourceFile)
                         : (mainSourceFile || null);
                     // Build per-file map
                     if (absSourceFile) {
@@ -981,8 +996,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             }
                             
                             // Use extracted sourceFile from label if available, otherwise use main sourceFile
+                            // _basLineToSourceFile values are relative to workspaceDir
                             const lineSourceFile = (this._basLineToSourceFile && this._basLineToSourceFile[borielLineNum]) 
-                                ? path.join(path.dirname(sourceFile || ''), this._basLineToSourceFile[borielLineNum])
+                                ? path.join(workspaceDir, this._basLineToSourceFile[borielLineNum])
                                 : (sourceFile || null);
                             
                             reverseExtended[`${hex}H`] = {

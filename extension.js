@@ -837,9 +837,23 @@ function activate(context) {
         }
     });
 
+    // Registrar DebugConfigurationProvider para inyectar sourceFile automáticamente
+    const debugConfigProvider = {
+        resolveDebugConfiguration(folder, debugConfig) {
+            if (debugConfig.type === 'borielbasic' && !debugConfig.sourceFile) {
+                const mainFile = vscode.workspace.getConfiguration('borielBasic').get('mainFile');
+                if (mainFile) {
+                    debugConfig.sourceFile = mainFile;
+                }
+            }
+            return debugConfig;
+        }
+    };
+
     // Registrar el DebugAdapterDescriptorFactory para 'borielbasic'
     const debugAdapterFactory = new InlineDebugAdapterFactory();
     context.subscriptions.push(
+        vscode.debug.registerDebugConfigurationProvider('borielbasic', debugConfigProvider),
         vscode.debug.registerDebugAdapterDescriptorFactory('borielbasic', debugAdapterFactory),
         compileCommand,
         updateLSPCommand,

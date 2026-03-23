@@ -186,6 +186,11 @@
                                 "type": "boolean",
                                 "description": "Detener automáticamente al iniciar el programa.",
                                 "default": true
+                            },
+                            "sourceFile": {
+                                "type": "string",
+                                "description": "Ruta al archivo .bas principal (relativa al workspaceFolder o absoluta). Si no se especifica se usa borielBasic.mainFile o main.bas en la raíz.",
+                                "default": "src/main.bas"
                             }
                         }
                     }
