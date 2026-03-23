@@ -543,16 +543,18 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // → smartload → run se ejecuta completamente dentro de _tryPlayTapeThenRun.
             // Los breakpoints pendientes también se instalan allí, una vez habilitados.
 
+            // Construir siempre el mapa de direcciones (necesario para breakpoints independientemente de stopOnEntry)
+            let entryAddr = null;
+            if (this._asmFile && fs.existsSync(this._asmFile)) {
+                await this._buildAsmAddressMap(this._asmFile);
+                await this._buildBasLineAddressMap(this._asmFile);
+            }
+
             // Pausar en la entrada si está configurado
             if (stopOnEntry) {
                 this.sendEvent(new OutputEvent(`Pausando en entrada...\n`));
 
-                // Build the Boriel line -> address map first
-                let entryAddr = null;
                 if (this._asmFile && fs.existsSync(this._asmFile)) {
-                    await this._buildAsmAddressMap(this._asmFile);
-                    await this._buildBasLineAddressMap(this._asmFile);
-
                     // If a linemap JSON exists and its keys look like addresses (e.g. '92BBH' -> '1'),
                     // prefer the first key as the entry breakpoint (user requested behavior).
                     try {
@@ -616,16 +618,28 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 // Delegar TODA la secuencia de inicio a _tryPlayTapeThenRun:
                 //   enter-cpu-step → enable-breakpoints → load-source-code
                 //   → set-breakpoint → smartload → run
-                // Así evitamos enviar comandos al socket antes de estar en cpu-step,
-                // lo que causaba timeouts y desincronización de respuestas.
                 try {
                     await this._tryPlayTapeThenRun(entryAddr);
                 } catch (e) {
                     this.sendEvent(new OutputEvent(`[Debug] Error en _tryPlayTapeThenRun: ${e.message}\n`, 'stderr'));
                 }
 
-                    this._stopped = true;
-                    this.sendEvent(new StoppedEvent('entry', 1));
+                this._stopped = true;
+                this.sendEvent(new StoppedEvent('entry', 1));
+            } else {
+                // Sin stopOnEntry: cargar y ejecutar directamente hasta que salte un breakpoint de usuario
+                this.sendEvent(new OutputEvent(`[Debug] stopOnEntry=false: ejecutando hasta breakpoint de usuario...\n`));
+                this._entryAddr = null;
+                try {
+                    await this._tryPlayTapeThenRun(null);
+                    // Si el emulador paró (en un breakpoint de usuario), notificar a VS Code
+                    if (this._lastPC !== null) {
+                        this._stopped = true;
+                        this.sendEvent(new StoppedEvent('breakpoint', 1));
+                    }
+                } catch (e) {
+                    this.sendEvent(new OutputEvent(`[Debug] Error en _tryPlayTapeThenRun: ${e.message}\n`, 'stderr'));
+                }
             }
 
                 // Si el usuario pidió la secuencia automática, iniciarla de forma asíncrona
