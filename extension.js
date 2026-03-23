@@ -552,49 +552,6 @@ function activate(context) {
     // Iniciar el cliente
     client.start();
 
-    // Reindexar al guardar: intentar notificar al LSP con una petición custom
-    // y, si falla, reiniciar el cliente para forzar reindexado.
-    async function triggerReindexOnSave() {
-        if (!client) return;
-        try {
-            // Intentamos enviar una petición personalizada 'workspace/reindex'
-            // Muchos LSPs soportan acciones custom; si el servidor no la soporta
-            // el envío fallará y haremos el reinicio como fallback.
-            await client.sendRequest('workspace/reindex', { path: workspacePath });
-            console.log('[Boriel Basic] Petición workspace/reindex enviada al LSP');
-            return;
-        } catch (err) {
-            console.log('[Boriel Basic] workspace/reindex no soportado o fallo, reiniciando LSP:', err && err.message ? err.message : err);
-        }
-
-        // Fallback: reiniciar el cliente para forzar reindexado
-        try {
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Reindexando proyecto...', cancellable: false }, async () => {
-                try { await client.stop(); } catch (e) { /* ignore */ }
-                try { client.start(); } catch (e) { console.error('[Boriel Basic] Error al reiniciar LSP:', e); }
-                try { if (client && typeof client.onReady === 'function') await client.onReady(); } catch (e) { /* ignore */ }
-            });
-            vscode.window.showInformationMessage('Reindexado completado.');
-        } catch (e) {
-            console.error('[Boriel Basic] Error durante reindexado fallback:', e);
-        }
-    }
-
-    // Listener: al guardar cualquier archivo dentro del workspace, lanzar reindexado.
-    const saveListener = vscode.workspace.onDidSaveTextDocument((document) => {
-        try {
-            // Ignorar archivos fuera del workspace (por ejemplo archivos temporales)
-            if (!workspacePath) return;
-            const docPath = document.uri && document.uri.fsPath;
-            if (!docPath || !docPath.startsWith(workspacePath)) return;
-            // Disparar reindex (no await para no bloquear el guardado)
-            triggerReindexOnSave();
-        } catch (e) {
-            console.error('[Boriel Basic] Error al manejar onDidSaveTextDocument:', e);
-        }
-    });
-    context.subscriptions.push(saveListener);
-
     // Registrar soporte de rename usando el LSP. Registramos el provider directamente
     // (las funciones comprueban `client.state` antes de enviar solicitudes), así
     // evitamos depender de `client.onReady()` que puede no existir en algunas versiones.
