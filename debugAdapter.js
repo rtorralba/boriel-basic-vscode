@@ -2332,6 +2332,24 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         if (!pc) return null;
         // Primary: _addrToFileAndLine built from reverseExtended (has correct sourceFile per entry)
         if (this._addrToFileAndLine && this._addrToFileAndLine[pc]) {
+            const hex = `${parseInt(pc, 10).toString(16).toUpperCase()}H`;
+            const entry = this._reverseLineMap && this._reverseLineMap[hex];
+            if (entry && entry.virtualLines && entry.virtualLines.length > 1) {
+                // If there are multiple virtual lines at this PC, prefer one that has a user breakpoint
+                const path = require('path');
+                for (const v of entry.virtualLines) {
+                    const normPath = path.normalize(v.file).toLowerCase();
+                    for (const [bpFile, bpLines] of Object.entries(this._userBreakpointsByFile || {})) {
+                        if (path.normalize(bpFile).toLowerCase() === normPath) {
+                            if (bpLines.has(v.line)) {
+                                return { file: v.file, line: v.line };
+                            }
+                        }
+                    }
+                }
+                // Fallback to the first virtual line in chronological order
+                return { file: entry.virtualLines[0].file, line: entry.virtualLines[0].line };
+            }
             return this._addrToFileAndLine[pc];
         }
         // Secondary: _fileAddrMap (built from zxbasm Declaring lines)
@@ -2526,18 +2544,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const addr = parseInt(m[1], 16);
                         this.sendEvent(new OutputEvent(`[Debug] Detectado breakpoint hit en 0x${addr.toString(16).toUpperCase()}\n`));
 
-                        // Try to map using _basLineToAddress first (authoritative)
-                        let basLine = null;
-                        if (this._basLineToAddress && Object.keys(this._basLineToAddress).length > 0) {
-                            for (const [bl, a] of Object.entries(this._basLineToAddress)) {
-                                if (parseInt(a, 10) === addr) {
-                                    basLine = parseInt(bl, 10);
-                                    break;
-                                }
-                            }
-                        }
+                        // Tratar de mapear a una línea y archivo específico usando virtual lines preferences
+                        const mapped = this._pcToFileAndLine(addr);
+                        let basLine = mapped ? mapped.line : null;
 
-                        // Fallback: mapear addr -> asm line -> bas line
+                        // Fallback heurístico en ensamblador si falla mapeo directo
                         if (!basLine && this._asmLineToAddress) {
                             // buscar la línea ASM exacta o la más cercana
                             let asmLine = null;
@@ -2561,9 +2572,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             }
                         }
 
-                        if (basLine) {
+                        if (mapped) {
+                            this._lastBasLine = mapped.line;
+                            this._lastSourceFile = mapped.file;
+                            this.sendEvent(new OutputEvent(`[Debug] Breakpoint en línea Boriel: ${mapped.line} (${require('path').basename(mapped.file)})\n`));
+                        } else if (basLine) {
                             this._lastBasLine = basLine;
-                            this.sendEvent(new OutputEvent(`[Debug] Breakpoint en línea Boriel: ${basLine}\n`));
+                            this.sendEvent(new OutputEvent(`[Debug] Breakpoint heurístico en línea Boriel: ${basLine}\n`));
                         }
 
                         this._stopped = true;
