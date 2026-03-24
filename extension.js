@@ -568,15 +568,18 @@ function activate(context) {
         }
 
         // Fallback: reiniciar el cliente para forzar reindexado
+        const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+        statusItem.text = '$(sync~spin) Reindexando Boriel Basic...';
+        statusItem.show();
         try {
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Reindexando proyecto...', cancellable: false }, async () => {
-                try { await client.stop(); } catch (e) { /* ignore */ }
-                try { client.start(); } catch (e) { console.error('[Boriel Basic] Error al reiniciar LSP:', e); }
-                try { if (client && typeof client.onReady === 'function') await client.onReady(); } catch (e) { /* ignore */ }
-            });
-            vscode.window.showInformationMessage('Reindexado completado.');
+            try { await client.stop(); } catch (e) { /* ignore */ }
+            try { client.start(); } catch (e) { console.error('[Boriel Basic] Error al reiniciar LSP:', e); }
+            try { if (client && typeof client.onReady === 'function') await client.onReady(); } catch (e) { /* ignore */ }
+            statusItem.text = '$(check) Reindexado completado';
+            setTimeout(() => statusItem.dispose(), 3000);
         } catch (e) {
             console.error('[Boriel Basic] Error durante reindexado fallback:', e);
+            statusItem.dispose();
         }
     }
 
@@ -587,6 +590,8 @@ function activate(context) {
             if (!workspacePath) return;
             const docPath = document.uri && document.uri.fsPath;
             if (!docPath || !docPath.startsWith(workspacePath)) return;
+            // Solo reindexar cuando el archivo guardado es un .bas
+            if (!docPath.endsWith('.bas')) return;
             // Disparar reindex (no await para no bloquear el guardado)
             triggerReindexOnSave();
         } catch (e) {
