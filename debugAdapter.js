@@ -399,6 +399,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     }
 
                     // PASO 2: Compilar el TAP desde el archivo original (para que funcione correctamente)
+                    // Si ocurre cualquier error durante las compilaciones, marcamos `compileFailed`
+                    // y evitamos lanzar ZEsarUX más adelante.
+                    let compileFailed = false;
                     // Use -O0 for debug compilation per user request to match optimizations
                     const compileCmd = `${bin} -O0 -t -B -a "${mainBas}" -o "${program}"`;
                     this.sendEvent(new OutputEvent(`[Debug] Compilando TAP: ${compileCmd}\n`));
@@ -411,6 +414,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const stdout = err.stdout ? err.stdout.toString() : '';
                         const stderr = err.stderr ? err.stderr.toString() : err.message;
                         this.sendEvent(new OutputEvent(`Error compilando TAP: ${stderr}\n`, 'stderr'));
+                        compileFailed = true;
                     }
 
                     // PASO 3: Compilar el ASM desde el archivo preprocesado principal (para obtener marcadores)
@@ -431,12 +435,25 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         this._generateLineMapFromAsm(asmFile);
                         try {
                             await this._buildBasLineAddressMap(asmFile);
-                        } catch (e) {
-                            this.sendEvent(new OutputEvent(`[Debug] ⚠ Error generando basLine->addr map: ${e.message}\n`, 'stderr'));
+                        } catch (innerErr) {
+                            const innerMsg = innerErr && innerErr.message ? innerErr.message : String(innerErr);
+                            this.sendEvent(new OutputEvent(`⚠ Error generando mapa de direcciones desde ASM: ${innerMsg}\n`, 'stderr'));
+                            compileFailed = true;
                         }
                     } catch (err) {
-                        const stderr = err.stderr ? err.stderr.toString() : err.message;
+                        const stderr = err && err.stderr ? (err.stderr.toString ? err.stderr.toString() : String(err.stderr)) : (err && err.message ? err.message : String(err));
                         this.sendEvent(new OutputEvent(`⚠ Error generando ASM: ${stderr}\n`, 'stderr'));
+                        compileFailed = true;
+                    }
+                    // Si la compilación TAP/ASM falló, informar al usuario y no iniciar el emulador
+                    if (compileFailed) {
+                        this.sendEvent(new OutputEvent(`[Debug] La compilación falló. No se iniciará ZEsarUX. Revisa la salida para más detalles.\n`, 'stderr'));
+                        this.sendErrorResponse(response, {
+                            id: 1006,
+                            format: `La compilación del programa ha fallado. No se iniciará el emulador ZEsarUX. Revisa la salida de compilación.`,
+                            showUser: true
+                        });
+                        return;
                     }
                 }
             } catch (e) {
