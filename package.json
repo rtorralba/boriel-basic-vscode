@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.33",
+    "version": "1.0.34",
     "author": "Raül Torralba (Juntelart)",
     "license": "AGPL-3.0",
     "publisher": "rtorralba",
@@ -24,7 +24,7 @@
         "onLanguage:borielbasic",
         "onDebugResolve:borielbasic",
         "onDebugInitialConfigurations",
-            "onCommand:borielBasic.updateZXP2Boriel"
+        "onCommand:borielBasic.updateZXP2Boriel"
     ],
     "main": "./extension.js",
     "contributes": {
@@ -51,7 +51,9 @@
             {
                 "path": "./borielbasic-markdown.tmLanguage.json",
                 "scopeName": "markdown.borielbasic.codeblock",
-                "injectTo": ["text.html.markdown"],
+                "injectTo": [
+                    "text.html.markdown"
+                ],
                 "embeddedLanguages": {
                     "meta.embedded.block.borielbasic": "borielbasic"
                 }
@@ -134,9 +136,7 @@
                 "command": "borielBasic.exportZXPToBoriel",
                 "title": "Export to Boriel Basic",
                 "category": "Boriel Basic"
-            }
-            ,
-            
+            },
             {
                 "command": "borielBasic.updateZXP2Boriel",
                 "title": "Actualizar zxp2boriel (binario)",
