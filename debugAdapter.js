@@ -14,13 +14,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._socketBuffer = '';
         this._pendingResponses = new Map();
         this._breakpoints = new Map();
-    this._pendingBreakpoints = []; // lista de { addrToken, clientLine }
-    this._lastCommandSent = null;
-    this._tapePlayUnsupported = false;
-    this._autoBpForPc = null; // dirección para la que ya establecimos un breakpoint automático
-    this._breakpointsEnabled = false;
-    this._breakpointIdCounter = 1;
-    this._breakpointAddrToId = new Map();
+        this._pendingBreakpoints = []; // lista de { addrToken, clientLine }
+        this._lastCommandSent = null;
+        this._tapePlayUnsupported = false;
+        this._autoBpForPc = null; // dirección para la que ya establecimos un breakpoint automático
+        this._breakpointsEnabled = false;
+        this._breakpointIdCounter = 1;
+        this._breakpointAddrToId = new Map();
         // user breakpoints stored per source path: { '/abs/path/main.bas': Set([1,2,3]) }
         this._userBreakpointsByFile = {};
         // Si true, preferimos usar la secuencia enter-cpu-step -> cpu-step -> run
@@ -34,7 +34,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._lineMap = null; // Mapeo línea Boriel -> líneas ASM
         this._reverseLineMap = null; // Mapeo línea ASM -> línea Boriel
         this._asmLineToAddress = null; // Mapeo línea ASM -> dirección
-    this._asmLabelAddressMap = {}; // mapa de etiqueta BAS___N___filename -> dirección (desde zxbasm Declaring)
+        this._asmLabelAddressMap = {}; // mapa de etiqueta BAS___N___filename -> dirección (desde zxbasm Declaring)
         this._lastPC = null; // último PC leído del emulador
         this._previousPC = null; // PC anterior (para detectar isEndOfSub en ambas posiciones)
         this._lastAsmLine = null; // última línea ASM conocida para PC
@@ -119,12 +119,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 if (strMatch) {
                                     size = strMatch[1].length;
                                 } else {
-                                    const parts = rest.split(/,/).map(s=>s.trim()).filter(s=>s.length>0);
+                                    const parts = rest.split(/,/).map(s => s.trim()).filter(s => s.length > 0);
                                     size = parts.length;
                                 }
                             } else if (directive === 'dw' || directive === 'defw') {
                                 type = 'word';
-                                const parts = rest.split(/,/).map(s=>s.trim()).filter(s=>s.length>0);
+                                const parts = rest.split(/,/).map(s => s.trim()).filter(s => s.length > 0);
                                 size = parts.length * 2;
                             } else if (directive === 'ds') {
                                 type = 'reserve';
@@ -152,7 +152,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 if (this._asmLineToAddress[asmLineNum]) addr = this._asmLineToAddress[asmLineNum];
                             }
 
-                            this._globalVariables.push({ name, asmLine: i+1, type, size, addr: addr || null });
+                            this._globalVariables.push({ name, asmLine: i + 1, type, size, addr: addr || null });
                         }
                         break; // whether data or not, stop scanning ahead for this label
                     }
@@ -194,8 +194,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             if (this._globalVariables.length > 0) {
                 this.sendEvent(new OutputEvent(`[Debug] Detectadas ${this._globalVariables.length} variables globales en ASM\n`));
                 for (const g of this._globalVariables) {
-                    const arrayInfo = g.isArray ? ` [array ${g.arrayElementType}(${(g.arrayDimensions||[]).join(',')})]` : '';
-                    this.sendEvent(new OutputEvent(`[Debug]   ${g.name} @ asmLine ${g.asmLine} type=${g.type} size=${g.size} addr=${g.addr ? '0x'+g.addr.toString(16).toUpperCase() : 'unknown'}${arrayInfo}\n`));
+                    const arrayInfo = g.isArray ? ` [array ${g.arrayElementType}(${(g.arrayDimensions || []).join(',')})]` : '';
+                    this.sendEvent(new OutputEvent(`[Debug]   ${g.name} @ asmLine ${g.asmLine} type=${g.type} size=${g.size} addr=${g.addr ? '0x' + g.addr.toString(16).toUpperCase() : 'unknown'}${arrayInfo}\n`));
                 }
             }
         } catch (e) {
@@ -246,7 +246,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     '/usr/local/bin/zesarux',
                     'zesarux'
                 ];
-                
+
                 for (const testPath of possiblePaths) {
                     if (fs.existsSync(testPath)) {
                         console.error('[BorielBasic Debug] Encontrado ZEsarUX en:', testPath);
@@ -254,19 +254,19 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         break;
                     }
                 }
-                
+
                 if (!zesaruxPath) {
                     zesaruxPath = 'zesarux'; // fallback
                 }
             }
-            
+
             const debugPort = args.debugPort || 10000;
             const program = args.program;
             this._program = program;
             const stopOnEntry = args.stopOnEntry !== false;
 
             console.error('[BorielBasic Debug] Configuración final:', { zesaruxPath, debugPort, program, stopOnEntry });
-            
+
             // Preparar carpeta .debug para archivos intermedios
             const programDir = path.dirname(program);
             const workspaceDir = path.dirname(programDir);
@@ -289,21 +289,21 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`[Debug] No se pudo crear .debug: ${e.message}\n`, 'stderr'));
             }
             const baseName = path.basename(program, '.tap');
-            
+
             // Cargar el mapeo de líneas si existe (ahora en .debug/)
             const lineMapFile = path.join(debugDir, baseName + '.linemap.json');
             if (fs.existsSync(lineMapFile)) {
                 try {
                     const lineMapContent = fs.readFileSync(lineMapFile, 'utf8');
                     this._lineMap = JSON.parse(lineMapContent);
-                    
+
                     // Detect format and create appropriate reverse mapping
                     this._reverseLineMap = {};
-                    
+
                     // Check if this is the new extended format (address -> { borielLine, sourceFile, isEndOfSub })
                     const firstKey = Object.keys(this._lineMap)[0];
                     const firstValue = this._lineMap[firstKey];
-                    
+
                     if (firstValue && typeof firstValue === 'object' && firstValue.borielLine !== undefined) {
                         // New extended format - use as-is
                         this._reverseLineMap = this._lineMap;
@@ -325,7 +325,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         }
                         this.sendEvent(new OutputEvent(`✓ Linemap cargado (formato legacy): ${Object.keys(this._lineMap).length} entradas convertidas\n`));
                     }
-                    
+
                     console.log('[BorielBasic Debug] Line map loaded:', this._lineMap);
                 } catch (err) {
                     this.sendEvent(new OutputEvent(`⚠ Error al cargar mapeo de líneas: ${err.message}\n`));
@@ -334,10 +334,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             } else {
                 this.sendEvent(new OutputEvent(`⚠ No se encontró archivo de mapeo de líneas: ${lineMapFile}\n`));
             }
-            
+
             // Guardar referencia al archivo fuente (por defecto basado en el TAP)
             this._sourceFile = program.replace(/\.tap$/i, '.bas');
-            
+
             this.sendEvent(new OutputEvent(`Configuración de debug:\n`));
             this.sendEvent(new OutputEvent(`  ZEsarUX: ${zesaruxPath}\n`));
             this.sendEvent(new OutputEvent(`  Puerto: ${debugPort}\n`));
@@ -361,7 +361,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     if (fs.existsSync(mainBas)) {
                         this._sourceFile = mainBas;
                     }
-                } catch (e) {}
+                } catch (e) { }
                 this.sendEvent(new OutputEvent(`[Debug] Intentando compilar desde: ${mainBas} (si existe)\n`));
 
                 // Determinar binario zxbc según plataforma
@@ -379,7 +379,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 } else {
                     // PASO 1: Pre-procesar TODOS los archivos .bas del proyecto
                     this.sendEvent(new OutputEvent(`[Debug] Pre-procesando archivos .bas del proyecto...\n`));
-                    
+
                     try {
                         // Buscar solo los archivos .bas a partir del main (siguiendo includes),
                         // en lugar de procesar todos los .bas del workspace.
@@ -397,10 +397,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         this.sendEvent(new OutputEvent(`[Debug] ⚠ Error pre-procesando: ${preErr.message}\n`, 'stderr'));
                         this.sendEvent(new OutputEvent(`[Debug] Continuando con compilación...\n`));
                     }
-                    
+
                     // PASO 2: Compilar el TAP desde el archivo original (para que funcione correctamente)
-                    // Use -O2 for debug compilation per user request to match optimizations
-                    const compileCmd = `${bin} -O2 -t -B -a "${mainBas}" -o "${program}"`;
+                    // Use -O0 for debug compilation per user request to match optimizations
+                    const compileCmd = `${bin} -O0 -t -B -a "${mainBas}" -o "${program}"`;
                     this.sendEvent(new OutputEvent(`[Debug] Compilando TAP: ${compileCmd}\n`));
                     try {
                         const execSync = require('child_process').execSync;
@@ -412,21 +412,21 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const stderr = err.stderr ? err.stderr.toString() : err.message;
                         this.sendEvent(new OutputEvent(`Error compilando TAP: ${stderr}\n`, 'stderr'));
                     }
-                    
+
                     // PASO 3: Compilar el ASM desde el archivo preprocesado principal (para obtener marcadores)
                     // Calcular la ruta relativa de mainBas dentro del workspace y replicarla en .debug/
                     const mainBasRelative = path.relative(workspaceDir, mainBas);
                     const preprocessedMainFile = path.join(debugDir, mainBasRelative);
                     const asmFile = path.join(debugDir, baseName + '.asm');
                     // Generate ASM from the preprocessed file using same optimization level
-                    const asmCmd = `${bin} -O2 -A "${preprocessedMainFile}" -o "${asmFile}"`;
+                    const asmCmd = `${bin} -O0 -A "${preprocessedMainFile}" -o "${asmFile}"`;
                     this.sendEvent(new OutputEvent(`[Debug] Generando ASM con marcadores: ${asmCmd}\n`));
                     try {
                         const execSync = require('child_process').execSync;
                         const out = execSync(asmCmd, { cwd: workspaceDir, encoding: 'utf8' });
                         if (out && out.length) this.sendEvent(new OutputEvent(`zxbc ASM: ${out}\n`));
                         this.sendEvent(new OutputEvent(`[Debug] ✓ ASM generado: ${asmFile}\n`));
-                        
+
                         // PASO 4: Generar el linemap desde el ASM con marcadores de las etiquetas BAS___N___filename
                         this._generateLineMapFromAsm(asmFile);
                         try {
@@ -452,7 +452,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 });
                 return;
             }
-            
+
             // Verificar que ZEsarUX existe
             if (zesaruxPath !== 'zesarux' && !fs.existsSync(zesaruxPath)) {
                 this.sendErrorResponse(response, {
@@ -586,10 +586,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     let entryBasLine = null;
                     try {
                         if (this._sourceFile && this._userBreakpointsByFile && this._userBreakpointsByFile[this._sourceFile]) {
-                            const s = Array.from(this._userBreakpointsByFile[this._sourceFile]).map(n => parseInt(n,10)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+                            const s = Array.from(this._userBreakpointsByFile[this._sourceFile]).map(n => parseInt(n, 10)).filter(n => !isNaN(n)).sort((a, b) => a - b);
                             if (s.length > 0) entryBasLine = s[0];
                         }
-                    } catch (e) {}
+                    } catch (e) { }
 
                     if (entryBasLine && this._basLineToAddress && this._basLineToAddress[entryBasLine]) {
                         entryAddr = this._basLineToAddress[entryBasLine];
@@ -642,21 +642,21 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 }
             }
 
-                // Si el usuario pidió la secuencia automática, iniciarla de forma asíncrona
-                try {
-                    if (args && args.autoSequence === true) {
-                        // iniciar en background para no bloquear la respuesta de launch
-                        setImmediate(() => {
-                            this._startSequentialBasBreakpointSequence().catch((e) => {
-                                this.sendEvent(new OutputEvent(`[Debug] Error en secuencia automática: ${e.message}\n`, 'stderr'));
-                            });
+            // Si el usuario pidió la secuencia automática, iniciarla de forma asíncrona
+            try {
+                if (args && args.autoSequence === true) {
+                    // iniciar en background para no bloquear la respuesta de launch
+                    setImmediate(() => {
+                        this._startSequentialBasBreakpointSequence().catch((e) => {
+                            this.sendEvent(new OutputEvent(`[Debug] Error en secuencia automática: ${e.message}\n`, 'stderr'));
                         });
-                    }
-                } catch (e) {
-                    this.sendEvent(new OutputEvent(`[Debug] Error comprobando autoSequence: ${e.message}\n`, 'stderr'));
+                    });
                 }
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] Error comprobando autoSequence: ${e.message}\n`, 'stderr'));
+            }
 
-                this.sendResponse(response);
+            this.sendResponse(response);
 
         } catch (error) {
             this.sendEvent(new OutputEvent(`Error general: ${error.message}\n${error.stack}\n`, 'stderr'));
@@ -679,7 +679,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async _buildAsmAddressMap(asmFile) {
         this._asmLineToAddress = {};
         this._asmLabelAddressMap = {};
-    this._asmSymbolAddressMap = {}; // other symbols (labels) -> address
+        this._asmSymbolAddressMap = {}; // other symbols (labels) -> address
         if (!asmFile || !fs.existsSync(asmFile)) return;
         try {
             let zxbasmPath;
@@ -698,8 +698,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this.sendEvent(new OutputEvent(`[Debug] Ejecutando zxbasm para mapear ASM (launch): ${zxbasmCmd}\n`));
             const execSync = require('child_process').execSync;
             // CRITICAL: Capture both stdout AND stderr because "Declaring" lines go to stderr
-            const out = execSync(zxbasmCmd, { 
-                cwd: path.dirname(asmFile), 
+            const out = execSync(zxbasmCmd, {
+                cwd: path.dirname(asmFile),
                 encoding: 'utf8',
                 stdio: ['pipe', 'pipe', 'pipe']  // stdin, stdout, stderr
             });
@@ -802,13 +802,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         if (sourceFile && fs.existsSync(sourceFile)) {
             try {
                 const sourceContent = fs.readFileSync(sourceFile, 'utf8').split('\n');
-                
+
                 // First pass: detect function calls
                 for (let i = 0; i < sourceContent.length; i++) {
                     const line = sourceContent[i].trim();
                     // Look for function calls like: greetUser("Maria"), functionName(args), etc.
                     const functionCallMatch = line.match(/(\w+)\s*\(/);
-                    if (functionCallMatch && !line.toUpperCase().includes('PRINT') && 
+                    if (functionCallMatch && !line.toUpperCase().includes('PRINT') &&
                         !line.toUpperCase().includes('IF') && !line.toUpperCase().includes('FOR') &&
                         !line.toUpperCase().includes('WHILE') && !line.toUpperCase().includes('DIM')) {
                         const functionName = functionCallMatch[1];
@@ -816,7 +816,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         functionCallInfo.set(functionName, { callLine: i + 1, callAddress: null });
                     }
                 }
-                
+
                 // Second pass: detect END SUB/FUNCTION and match with calls
                 for (let i = 0; i < sourceContent.length; i++) {
                     const line = sourceContent[i].trim().toUpperCase();
@@ -832,7 +832,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 break;
                             }
                         }
-                        
+
                         // The actual return happens on the line *before* the END SUB/FUNCTION
                         // Let's find the last non-empty, non-comment line before the END SUB/FUNCTION
                         let targetLine = -1;
@@ -845,9 +845,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             }
                         }
                         if (targetLine !== -1) {
-                            this.sendEvent(new OutputEvent(`[Debug] Detected end of sub/function '${functionName}' at line ${i+1}. Marking line ${targetLine} as isEndOfSub.\n`));
+                            this.sendEvent(new OutputEvent(`[Debug] Detected end of sub/function '${functionName}' at line ${i + 1}. Marking line ${targetLine} as isEndOfSub.\n`));
                             endOfSubLines.add(targetLine);
-                            
+
                             // Store function info for later stepOutAddress calculation
                             if (functionName && functionCallInfo.has(functionName)) {
                                 const callInfo = functionCallInfo.get(functionName);
@@ -926,7 +926,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Don't run fallback heuristic if we have authoritative addresses from zxbasm
         } else {
             this.sendEvent(new OutputEvent(`[Debug][WARNING] ⚠ No zxbasm Declaring addresses found! Falling back to heuristic mapping.\n`, 'stderr'));
-            
+
             // Fallback heuristic: scan for BAS___N___filename: labels in ASM and find next instruction address
             const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
 
@@ -969,7 +969,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         }
 
         // Log the mapping in a human readable way
-        const basKeys = Object.keys(this._basLineToAddress).map(k => parseInt(k,10)).sort((a,b)=>a-b);
+        const basKeys = Object.keys(this._basLineToAddress).map(k => parseInt(k, 10)).sort((a, b) => a - b);
         this.sendEvent(new OutputEvent(`[Debug] Baseline -> address map (${basKeys.length} entries):\n`));
         for (const k of basKeys) {
             const addr = this._basLineToAddress[k];
@@ -978,105 +978,105 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
         // Persist a small linemap with addresses next to existing linemap file if possible
         try {
-                if (this._program) {
-                    const programDir = path.dirname(this._program);
-                    const workspaceDir = path.dirname(programDir);
-                    const debugDir = path.join(workspaceDir, '.debug');
-                    const baseName = path.basename(this._program, '.tap');
-                    const outFile = path.join(debugDir, baseName + '.linemap.json');
-                    // Persist reverse mapping: { '92BBH': { borielLine: 1, sourceFile: '...', isEndOfSub: false }, ... }
-                    const reverseExtended = {};
-                    // Also build runtime map addrDecimal -> basLine
-                    this._addrToBasLine = {};
-                    // Full map: addrDecimal -> { file: absPath, line: number }
-                    this._addrToFileAndLine = {};
-                    for (const k of basKeys) {
-                        const addr = this._basLineToAddress[k];
-                        if (addr !== undefined && addr !== null) {
-                            const hex = addr.toString(16).toUpperCase();
-                            const borielLineNum = parseInt(k, 10);
-                            
-                            // Calculate stepOutAddress for endOfSub lines
-                            let stepOutAddress = null;
-                            if (endOfSubLines.has(borielLineNum)) {
-                                // Find which function this endOfSub belongs to
-                                for (const [functionName, callInfo] of functionCallInfo.entries()) {
-                                    if (callInfo.endOfSubLine === borielLineNum && callInfo.returnAddress) {
-                                        stepOutAddress = callInfo.returnAddress;
-                                        this.sendEvent(new OutputEvent(`[Debug] Line ${borielLineNum} (end of '${functionName}') gets stepOutAddress=0x${stepOutAddress.toString(16).toUpperCase()}\n`));
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            // Use extracted sourceFile from label if available, otherwise use main sourceFile
-                            // _basLineToSourceFile values are relative to workspaceDir
-                            const lineSourceFile = (this._basLineToSourceFile && this._basLineToSourceFile[borielLineNum]) 
-                                ? path.join(workspaceDir, this._basLineToSourceFile[borielLineNum])
-                                : (sourceFile || null);
-                            
-                            reverseExtended[`${hex}H`] = {
-                                borielLine: borielLineNum,
-                                sourceFile: lineSourceFile,
-                                isEndOfSub: endOfSubLines.has(borielLineNum),
-                                stepOutAddress: stepOutAddress
-                            };
-                            try {
-                                const addrKey = parseInt(addr, 10);
-                                // First-write-wins: basKeys is sorted ascending so lower line numbers
-                                // (e.g. main.bas:5) are processed before higher ones (e.g. sprite.bas:316).
-                                // When two labels share the same address (one is a pure-label with no data
-                                // between it and the next label), the first mapping wins so that
-                                // _pcToFileAndLine() returns the correct main-file entry.
-                                if (!this._addrToBasLine[addrKey]) {
-                                    this._addrToBasLine[addrKey] = borielLineNum;
-                                }
-                                if (lineSourceFile && !this._addrToFileAndLine[addrKey]) {
-                                    this._addrToFileAndLine[addrKey] = { file: lineSourceFile, line: borielLineNum };
-                                }
-                            } catch (e) {}
-                        }
-                    }
-                    // Log del mapeo construido
-                    this.sendEvent(new OutputEvent(`[Debug] ✓ Mapeo reverso construido con ${Object.keys(this._addrToBasLine).length} direcciones\n`));
+            if (this._program) {
+                const programDir = path.dirname(this._program);
+                const workspaceDir = path.dirname(programDir);
+                const debugDir = path.join(workspaceDir, '.debug');
+                const baseName = path.basename(this._program, '.tap');
+                const outFile = path.join(debugDir, baseName + '.linemap.json');
+                // Persist reverse mapping: { '92BBH': { borielLine: 1, sourceFile: '...', isEndOfSub: false }, ... }
+                const reverseExtended = {};
+                // Also build runtime map addrDecimal -> basLine
+                this._addrToBasLine = {};
+                // Full map: addrDecimal -> { file: absPath, line: number }
+                this._addrToFileAndLine = {};
+                for (const k of basKeys) {
+                    const addr = this._basLineToAddress[k];
+                    if (addr !== undefined && addr !== null) {
+                        const hex = addr.toString(16).toUpperCase();
+                        const borielLineNum = parseInt(k, 10);
 
-                    // Supplement _addrToFileAndLine from _fileAddrMap so that lines from
-                    // included files (e.g. lib/functions.bas) are also reachable by step loops.
-                    // _basLineToAddress only keeps one entry per line-number (main file wins),
-                    // so functions.bas lines that share numbers with main.bas are missing above.
-                    if (this._fileAddrMap) {
-                        let added = 0;
-                        for (const [absFile, lineMap] of Object.entries(this._fileAddrMap)) {
-                            for (const [lineStr, addr] of Object.entries(lineMap)) {
-                                const addrNum = parseInt(addr, 10);
-                                if (!this._addrToFileAndLine[addrNum]) {
-                                    this._addrToFileAndLine[addrNum] = { file: absFile, line: parseInt(lineStr, 10) };
-                                    added++;
-                                }
-                                if (!this._addrToBasLine[addrNum]) {
-                                    this._addrToBasLine[addrNum] = parseInt(lineStr, 10);
+                        // Calculate stepOutAddress for endOfSub lines
+                        let stepOutAddress = null;
+                        if (endOfSubLines.has(borielLineNum)) {
+                            // Find which function this endOfSub belongs to
+                            for (const [functionName, callInfo] of functionCallInfo.entries()) {
+                                if (callInfo.endOfSubLine === borielLineNum && callInfo.returnAddress) {
+                                    stepOutAddress = callInfo.returnAddress;
+                                    this.sendEvent(new OutputEvent(`[Debug] Line ${borielLineNum} (end of '${functionName}') gets stepOutAddress=0x${stepOutAddress.toString(16).toUpperCase()}\n`));
+                                    break;
                                 }
                             }
                         }
-                        if (added > 0) {
-                            this.sendEvent(new OutputEvent(`[Debug] ✓ _addrToFileAndLine ampliado con ${added} entradas de archivos incluidos\n`));
-                        }
-                    }
 
-                    if (Object.keys(this._addrToBasLine).length > 0) {
-                        const sample = Object.entries(this._addrToBasLine).slice(0, 5);
-                        this.sendEvent(new OutputEvent(`[Debug] Ejemplo de mapeo: ${JSON.stringify(sample)}\n`));
-                    }
-                    this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseExtended).length} entries:\n`));
-                    for (const [k, v] of Object.entries(reverseExtended)) {
-                        this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${JSON.stringify(v)}\n`));
-                    }
-                    fs.writeFileSync(outFile, JSON.stringify(reverseExtended, null, 2), 'utf8');
-                    this.sendEvent(new OutputEvent(`[Debug] Persistido linemap reverse con direcciones en: ${outFile}\n`));
+                        // Use extracted sourceFile from label if available, otherwise use main sourceFile
+                        // _basLineToSourceFile values are relative to workspaceDir
+                        const lineSourceFile = (this._basLineToSourceFile && this._basLineToSourceFile[borielLineNum])
+                            ? path.join(workspaceDir, this._basLineToSourceFile[borielLineNum])
+                            : (sourceFile || null);
 
-                    // IMPORTANT: Update the in-memory _reverseLineMap to use the new extended format
-                    this._reverseLineMap = reverseExtended;
+                        reverseExtended[`${hex}H`] = {
+                            borielLine: borielLineNum,
+                            sourceFile: lineSourceFile,
+                            isEndOfSub: endOfSubLines.has(borielLineNum),
+                            stepOutAddress: stepOutAddress
+                        };
+                        try {
+                            const addrKey = parseInt(addr, 10);
+                            // First-write-wins: basKeys is sorted ascending so lower line numbers
+                            // (e.g. main.bas:5) are processed before higher ones (e.g. sprite.bas:316).
+                            // When two labels share the same address (one is a pure-label with no data
+                            // between it and the next label), the first mapping wins so that
+                            // _pcToFileAndLine() returns the correct main-file entry.
+                            if (!this._addrToBasLine[addrKey]) {
+                                this._addrToBasLine[addrKey] = borielLineNum;
+                            }
+                            if (lineSourceFile && !this._addrToFileAndLine[addrKey]) {
+                                this._addrToFileAndLine[addrKey] = { file: lineSourceFile, line: borielLineNum };
+                            }
+                        } catch (e) { }
+                    }
                 }
+                // Log del mapeo construido
+                this.sendEvent(new OutputEvent(`[Debug] ✓ Mapeo reverso construido con ${Object.keys(this._addrToBasLine).length} direcciones\n`));
+
+                // Supplement _addrToFileAndLine from _fileAddrMap so that lines from
+                // included files (e.g. lib/functions.bas) are also reachable by step loops.
+                // _basLineToAddress only keeps one entry per line-number (main file wins),
+                // so functions.bas lines that share numbers with main.bas are missing above.
+                if (this._fileAddrMap) {
+                    let added = 0;
+                    for (const [absFile, lineMap] of Object.entries(this._fileAddrMap)) {
+                        for (const [lineStr, addr] of Object.entries(lineMap)) {
+                            const addrNum = parseInt(addr, 10);
+                            if (!this._addrToFileAndLine[addrNum]) {
+                                this._addrToFileAndLine[addrNum] = { file: absFile, line: parseInt(lineStr, 10) };
+                                added++;
+                            }
+                            if (!this._addrToBasLine[addrNum]) {
+                                this._addrToBasLine[addrNum] = parseInt(lineStr, 10);
+                            }
+                        }
+                    }
+                    if (added > 0) {
+                        this.sendEvent(new OutputEvent(`[Debug] ✓ _addrToFileAndLine ampliado con ${added} entradas de archivos incluidos\n`));
+                    }
+                }
+
+                if (Object.keys(this._addrToBasLine).length > 0) {
+                    const sample = Object.entries(this._addrToBasLine).slice(0, 5);
+                    this.sendEvent(new OutputEvent(`[Debug] Ejemplo de mapeo: ${JSON.stringify(sample)}\n`));
+                }
+                this.sendEvent(new OutputEvent(`[Debug] About to persist reverse linemap with ${Object.keys(reverseExtended).length} entries:\n`));
+                for (const [k, v] of Object.entries(reverseExtended)) {
+                    this.sendEvent(new OutputEvent(`[Debug]   JSON[${k}] = ${JSON.stringify(v)}\n`));
+                }
+                fs.writeFileSync(outFile, JSON.stringify(reverseExtended, null, 2), 'utf8');
+                this.sendEvent(new OutputEvent(`[Debug] Persistido linemap reverse con direcciones en: ${outFile}\n`));
+
+                // IMPORTANT: Update the in-memory _reverseLineMap to use the new extended format
+                this._reverseLineMap = reverseExtended;
+            }
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] No se pudo persistir linemap: ${e.message}\n`, 'stderr'));
         }
@@ -1092,16 +1092,16 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     await this._sendCommandAndWait(`remove-breakpoint ${bpId}`);
                 } catch (e) {
                     // try alternative name
-                    try { await this._sendCommandAndWait(`delete-breakpoint ${bpId}`); } catch (e2) {}
+                    try { await this._sendCommandAndWait(`delete-breakpoint ${bpId}`); } catch (e2) { }
                 }
                 this._breakpointAddrToId.delete(parseInt(addrNum, 10));
                 this._breakpoints.delete(bpId);
                 return true;
             }
             // Fallback: try legacy removal by address
-            const addrToken = `${parseInt(addrNum,10).toString(16).toUpperCase()}h`;
-            try { await this._sendCommandAndWait(`break del ${addrToken}`); return true; } catch (e) {}
-            try { await this._sendCommandAndWait(`break remove ${addrToken}`); return true; } catch (e) {}
+            const addrToken = `${parseInt(addrNum, 10).toString(16).toUpperCase()}h`;
+            try { await this._sendCommandAndWait(`break del ${addrToken}`); return true; } catch (e) { }
+            try { await this._sendCommandAndWait(`break remove ${addrToken}`); return true; } catch (e) { }
             return false;
         } catch (e) {
             return false;
@@ -1115,10 +1115,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async _setSequenceBreakpoint(addrNum) {
         try {
             if (!addrNum) return false;
-            try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+            try { await this._ensureBreakpointsEnabled(); } catch (e) { }
 
             // Try to remove existing id 1 (best-effort)
-            try { await this._sendCommandAndWait('remove-breakpoint 1'); } catch (e) { try { await this._sendCommandAndWait('delete-breakpoint 1'); } catch(e2) {} }
+            try { await this._sendCommandAndWait('remove-breakpoint 1'); } catch (e) { try { await this._sendCommandAndWait('delete-breakpoint 1'); } catch (e2) { } }
 
             const hexNoPrefix = parseInt(addrNum, 10).toString(16).toUpperCase();
             const cmd = `set-breakpoint 1 PC=${hexNoPrefix}H`;
@@ -1154,20 +1154,20 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     _findAllBasFiles(workspaceDir, debugDir) {
         const basFiles = [];
         const debugDirNormalized = path.normalize(debugDir);
-        
+
         const searchDir = (dir) => {
             try {
                 const entries = fs.readdirSync(dir, { withFileTypes: true });
-                
+
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
                     const normalizedPath = path.normalize(fullPath);
-                    
+
                     // Saltar la carpeta .debug
                     if (normalizedPath.startsWith(debugDirNormalized)) {
                         continue;
                     }
-                    
+
                     if (entry.isDirectory()) {
                         // Recursión en subcarpetas
                         searchDir(fullPath);
@@ -1179,7 +1179,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 // Ignorar errores de permisos, etc.
             }
         };
-        
+
         searchDir(workspaceDir);
         return basFiles;
     }
@@ -1277,7 +1277,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         results.push(full);
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         };
         search(workspaceDir);
         return results;
@@ -1291,25 +1291,25 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         try {
             // Calcular la ruta relativa desde workspaceDir
             const relativePath = path.relative(workspaceDir, basFile);
-            
+
             // Construir la ruta de destino en .debug
             const targetFile = path.join(debugDir, relativePath);
             const targetDir = path.dirname(targetFile);
-            
+
             // Crear la estructura de carpetas si no existe
             if (!fs.existsSync(targetDir)) {
                 fs.mkdirSync(targetDir, { recursive: true });
             }
-            
+
             // Leer el contenido del archivo original
             const sourceContent = fs.readFileSync(basFile, 'utf8');
             const sourceLines = sourceContent.split('\n');
             const preprocessedLines = [];
-            
+
             // Tokens que representan sentencias puramente estructurales/declarativas
             // que NO generan código Z80 propio y no deben recibir marcador de línea.
             // DIM se trata aparte: sin inicializador no genera código, con = sí.
-            const FLOW_TOKENS = new Set(['ELSE','END','THEN','SUB','FUNCTION']);
+            const FLOW_TOKENS = new Set(['ELSE', 'END', 'THEN', 'SUB', 'FUNCTION']);
 
             // Generar nombre de archivo para las etiquetas usando la ruta relativa completa
             // Formato: BAS___lineNumber___filename donde:
@@ -1337,22 +1337,22 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const isDimNoInit = firstToken === 'DIM' && !trimmedLine.includes('=');
                 // No insertar marcador en líneas de continuación (son parte de la sentencia anterior)
                 if (trimmedLine && !isComment && !isPreprocessor && !isDimNoInit && !isContinuation && !FLOW_TOKENS.has(firstToken)) {
-                    
+
                     // Añadir marcador ANTES de la línea de código
                     // Formato: BAS___lineNumber___filename
                     preprocessedLines.push(`ASM`);
                     preprocessedLines.push(`BAS___${originalLineNumber}___${fileLabel}:`);
                     preprocessedLines.push(`END ASM`);
                 }
-                
+
                 // Añadir la línea original
                 preprocessedLines.push(line);
             });
-            
+
             // Guardar el archivo preprocesado
             fs.writeFileSync(targetFile, preprocessedLines.join('\n'), 'utf8');
             this.sendEvent(new OutputEvent(`[Debug]   ✓ ${relativePath}\n`));
-            
+
         } catch (err) {
             this.sendEvent(new OutputEvent(`[Debug]   ⚠ Error procesando ${path.basename(basFile)}: ${err.message}\n`, 'stderr'));
         }
@@ -1365,7 +1365,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     _generateLineMapFromAsm(asmFile) {
         try {
             this.sendEvent(new OutputEvent(`[Debug] Generando line map desde marcadores en: ${asmFile}\n`));
-            
+
             if (!fs.existsSync(asmFile)) {
                 this.sendEvent(new OutputEvent(`[Debug] ⚠ No se encontró ASM para generar linemap: ${asmFile}\n`, 'stderr'));
                 return;
@@ -1489,23 +1489,23 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     }
                 }
             }
-            
+
             // Mostrar resumen del mapeo
             const totalBorielLines = Object.keys(this._lineMap).length;
             let totalAsmLines = 0;
             for (const basLine in this._lineMap) {
                 totalAsmLines += this._lineMap[basLine].length;
             }
-            
+
             this.sendEvent(new OutputEvent(`[Debug] ✓ Line map generado: ${totalBorielLines} líneas Boriel → ${totalAsmLines} líneas ASM\n`));
-            
+
             // Mostrar algunas líneas como ejemplo
             const firstLines = Object.keys(this._lineMap).slice(0, 3);
             firstLines.forEach(basLine => {
                 const asmLines = this._lineMap[basLine];
                 this.sendEvent(new OutputEvent(`[Debug]   Línea ${basLine}: ${asmLines.length} instrucciones ASM\n`));
             });
-            
+
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] ⚠ Error generando line map: ${e.message}\n`, 'stderr'));
         }
@@ -1599,14 +1599,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
         try {
             this.sendEvent(new OutputEvent(`[Debug] Preparando para cargar TAP...\n`));
-            
+
             // Use smartload command to load the TAP file
             const tapPath = this._program || '';
             if (!tapPath) {
                 this.sendEvent(new OutputEvent(`[Debug] Error: No hay ruta de programa TAP\n`, 'stderr'));
                 return;
             }
-            
+
             // Secuencia recomendada por el autor de ZEsarUX:
             // 1) enter-cpu-step   → pone el emulador en modo paso a paso
             // 2) enable-breakpoints → ahora sí responde correctamente
@@ -1617,7 +1617,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             this.sendEvent(new OutputEvent(`[Debug] PASO 1: Entrando en modo step...\n`));
             const stepResp = await this._sendCommandAndWait('enter-cpu-step');
-            this.sendEvent(new OutputEvent(`[Debug] enter-cpu-step: ${String(stepResp).replace(/\n/g,' ')}\n`));
+            this.sendEvent(new OutputEvent(`[Debug] enter-cpu-step: ${String(stepResp).replace(/\n/g, ' ')}\n`));
             await this._waitForZesarux(300);
 
             this.sendEvent(new OutputEvent(`[Debug] PASO 2: Habilitando breakpoints...\n`));
@@ -1680,17 +1680,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             this.sendEvent(new OutputEvent(`[Debug] PASO 5: Ejecutando smartload...\n`));
             const smartloadResp = await this._sendCommandAndWait(`smartload ${tapPathNormalized}`);
-            const smartloadRespStr = String(smartloadResp).replace(/\n/g,' ');
+            const smartloadRespStr = String(smartloadResp).replace(/\n/g, ' ');
             this.sendEvent(new OutputEvent(`[Debug] smartload: ${smartloadRespStr}\n`));
             if (smartloadRespStr.toLowerCase().includes('error')) {
                 throw new Error('smartload failed: ' + smartloadRespStr);
             }
             await this._waitForZesarux(300);
-            
+
             // PASO 6: run — espera hasta que ZEsarUX pare en un breakpoint (hasta 30s)
             this.sendEvent(new OutputEvent(`[Debug] Ejecutando run (esperando breakpoint)...\n`));
             const runResp = await this._sendCommandAndWait('run', 30000);
-            this.sendEvent(new OutputEvent(`[Debug] run detenido: ${String(runResp).replace(/\n/g,' ').slice(0, 120)}\n`));
+            this.sendEvent(new OutputEvent(`[Debug] run detenido: ${String(runResp).replace(/\n/g, ' ').slice(0, 120)}\n`));
 
             // Mapear PC de la respuesta a archivo/línea Boriel
             const runPcMatch = String(runResp).match(/PC=([0-9A-Fa-f]{1,4})/i);
@@ -1706,10 +1706,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     this.sendEvent(new OutputEvent(`[Debug] PC=0x${stoppedPc.toString(16).toUpperCase()} no mapeado a línea Boriel\n`));
                 }
             }
-            
+
             // The emulator has stopped at a breakpoint
             this.sendEvent(new OutputEvent(`[Debug] Programa cargado y detenido en breakpoint\n`));
-            
+
         } catch (e) {
             this.sendEvent(new OutputEvent(`[Debug] Error durante smartload: ${e.message}\n`, 'stderr'));
             // Fallback: try manual sequence
@@ -1748,7 +1748,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 if (resolved) return;
                 resolved = true;
                 clearTimeout(timer);
-                try { this._debugSocket.removeListener('data', dataListener); } catch (e) {}
+                try { this._debugSocket.removeListener('data', dataListener); } catch (e) { }
                 // Extract meaningful content: everything before the final prompt line
                 const clean = txt.replace(/command(?:@[^\n>]*)?>[ \t]*$/m, '').trim();
                 if (clean) this.sendEvent(new OutputEvent(`< ${clean}\n`, 'console'));
@@ -1779,7 +1779,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Timeout fallback – resolve with whatever we have accumulated
             const timer = setTimeout(() => {
                 if (!resolved) {
-                    this.sendEvent(new OutputEvent(`< (timeout: ${JSON.stringify(accumulated.slice(0,80))})\n`, 'console'));
+                    this.sendEvent(new OutputEvent(`< (timeout: ${JSON.stringify(accumulated.slice(0, 80))})\n`, 'console'));
                     finish(accumulated);
                 }
             }, timeoutMs);
@@ -1856,7 +1856,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const keys = Object.keys(this._lineMap).slice(0, 8);
                 for (const k of keys) {
                     const v = this._lineMap[k];
-                    this.sendEvent(new OutputEvent(`[Debug][DIAG] bas ${k} -> asmCount=${v.length} sampleAsm=${v.slice(0,4).join(',')}\n`));
+                    this.sendEvent(new OutputEvent(`[Debug][DIAG] bas ${k} -> asmCount=${v.length} sampleAsm=${v.slice(0, 4).join(',')}\n`));
                 }
             } else {
                 this.sendEvent(new OutputEvent(`[Debug][DIAG] _lineMap is empty\n`));
@@ -1880,7 +1880,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const entries = [];
                     for (let d = -3; d <= 3; d++) {
                         const ln = s + d;
-                        if (ln > 0 && this._asmLineToAddress[ln]) entries.push(`${ln}->0x${parseInt(this._asmLineToAddress[ln],10).toString(16)}`);
+                        if (ln > 0 && this._asmLineToAddress[ln]) entries.push(`${ln}->0x${parseInt(this._asmLineToAddress[ln], 10).toString(16)}`);
                     }
                     this.sendEvent(new OutputEvent(`[Debug][DIAG] _asmLineToAddress nearby: ${entries.join(',') || 'n/a'}\n`));
                 }
@@ -1891,7 +1891,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             this.sendEvent(new OutputEvent(`[Debug][DIAG] --- end diagnostics ---\n`));
         } catch (e) {
             // Do not let diagnostics crash the adapter
-            try { this.sendEvent(new OutputEvent(`[Debug][DIAG] Error dumping diagnostics: ${e.message}\n`, 'stderr')); } catch (e2) {}
+            try { this.sendEvent(new OutputEvent(`[Debug][DIAG] Error dumping diagnostics: ${e.message}\n`, 'stderr')); } catch (e2) { }
         }
     }
 
@@ -1921,7 +1921,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
 
             // ordenar las líneas Boriel en orden ascendente
-            const basKeys = Object.keys(this._basLineToAddress).map(k => parseInt(k,10)).sort((a,b)=>a-b);
+            const basKeys = Object.keys(this._basLineToAddress).map(k => parseInt(k, 10)).sort((a, b) => a - b);
             if (basKeys.length === 0) return;
 
             this.sendEvent(new OutputEvent(`[Debug] Iniciando secuencia automática de ${basKeys.length} breakpoints (basLine -> address)\n`));
@@ -1938,7 +1938,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const addrToken = `${addrNum.toString(16).toUpperCase()}h`;
 
                     // instalar breakpoint temporal
-                    try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+                    try { await this._ensureBreakpointsEnabled(); } catch (e) { }
                     // Use sequence breakpoint slot 1 as the authoritative slot
                     const installed = await this._setSequenceBreakpoint(addrNum);
                     if (!installed) {
@@ -1969,8 +1969,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const deadline = Date.now() + timeoutMs;
                     let reached = false;
                     while (Date.now() < deadline) {
-                        if (this._lastPC && parseInt(this._lastPC,10) === addrNum) { reached = true; break; }
-                        if (this._stopped && this._lastPC) { reached = (parseInt(this._lastPC,10) === addrNum) || true; break; }
+                        if (this._lastPC && parseInt(this._lastPC, 10) === addrNum) { reached = true; break; }
+                        if (this._stopped && this._lastPC) { reached = (parseInt(this._lastPC, 10) === addrNum) || true; break; }
                         await this._waitForZesarux(50);
                     }
 
@@ -2094,7 +2094,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             if (!this._sourceFile) return null;
             const s = this._userBreakpointsByFile && this._userBreakpointsByFile[this._sourceFile];
             if (!s || s.size === 0) return null;
-            const arr = Array.from(s).map(n => parseInt(n,10)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+            const arr = Array.from(s).map(n => parseInt(n, 10)).filter(n => !isNaN(n)).sort((a, b) => a - b);
             for (const n of arr) {
                 if (n > currentBasLine) return n;
             }
@@ -2107,7 +2107,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async _attemptConnection(port) {
         return new Promise((resolve, reject) => {
             this._debugSocket = new net.Socket();
-            
+
             let connected = false;
             const timeout = setTimeout(() => {
                 if (!connected) {
@@ -2148,7 +2148,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 clearTimeout(timeout);
                 connected = true;
                 this.sendEvent(new OutputEvent('[Debug] Socket conectado\n'));
-                
+
                 // Leer y descartar mensaje de bienvenida
                 const welcomePromise = new Promise((res) => {
                     const welcomeListener = (data) => {
@@ -2158,12 +2158,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     };
                     this._debugSocket.on('data', welcomeListener);
                 });
-                
+
                 await Promise.race([
                     welcomePromise,
                     new Promise(r => setTimeout(r, 1000)) // timeout si no llega bienvenida
                 ]);
-                
+
                 this.sendEvent(new OutputEvent('[Debug] Listo para enviar comandos\n'));
                 resolve();
             });
@@ -2179,7 +2179,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             throw new Error('No hay conexión para aplicar breakpoints pendientes');
         }
         this.sendEvent(new OutputEvent(`Aplicando ${this._pendingBreakpoints.length} breakpoints pendientes...\n`));
-                while (this._pendingBreakpoints.length > 0) {
+        while (this._pendingBreakpoints.length > 0) {
             const pb = this._pendingBreakpoints.shift();
             try {
                 const installed = await this._installBreakpoint(pb.addrToken, pb.clientLine);
@@ -2211,10 +2211,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`✓ Breakpoints ya estaban habilitados\n`));
             } else if (txt.includes('unknown command') || txt.includes('not found') || (txt.includes('error') && !txt.includes('already'))) {
                 this._breakpointsEnabled = false;
-                this.sendEvent(new OutputEvent(`✗ enable-breakpoints no soportado o falló: ${String(resp).replace(/\n/g,' ')}\n`, 'stderr'));
+                this.sendEvent(new OutputEvent(`✗ enable-breakpoints no soportado o falló: ${String(resp).replace(/\n/g, ' ')}\n`, 'stderr'));
             } else {
                 this._breakpointsEnabled = true;
-                this.sendEvent(new OutputEvent(`✓ Breakpoints habilitados: ${String(resp).replace(/\n/g,' ')}\n`));
+                this.sendEvent(new OutputEvent(`✓ Breakpoints habilitados: ${String(resp).replace(/\n/g, ' ')}\n`));
             }
         } catch (e) {
             this._breakpointsEnabled = false;
@@ -2244,7 +2244,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 const resp = await this._sendCommandAndWait(cmd);
                 const lower = String(resp || '').toLowerCase();
                 if (lower.includes('unknown command') || lower.includes('error setting breakpoint') || lower.includes('error adding breakpoint') || lower.includes('error')) {
-                    this.sendEvent(new OutputEvent(`⚠ set-breakpoint respondió con: ${resp.replace(/\n/g,' ')}; usando fallback legacy\n`, 'stderr'));
+                    this.sendEvent(new OutputEvent(`⚠ set-breakpoint respondió con: ${resp.replace(/\n/g, ' ')}; usando fallback legacy\n`, 'stderr'));
                     try {
                         await this._sendCommand(`break set ${addrToken}`);
                         return true;
@@ -2310,11 +2310,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
     _handleSocketData(data) {
         this._socketBuffer += data.toString();
-        
+
         // Procesar líneas completas
         let lines = this._socketBuffer.split('\n');
         this._socketBuffer = lines.pop() || ''; // Guardar la última línea incompleta
-        
+
         for (let line of lines) {
             this.sendEvent(new OutputEvent(`< ${line}\n`, 'console'));
 
@@ -2339,7 +2339,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     // Always include PC
                     regs['PC'] = pc;
                     this._lastRegisters = regs;
-                    
+
                     // Try to map PC to Boriel line using _basLineToAddress (authoritative)
                     let mappedBasLine = null;
                     if (this._basLineToAddress && Object.keys(this._basLineToAddress).length > 0) {
@@ -2351,7 +2351,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             }
                         }
                     }
-                    
+
                     // Fallback: intentar mapear addr -> asm line -> bas line
                     if (!mappedBasLine) {
                         this.sendEvent(new OutputEvent(`[Debug] No hay mapeo directo para PC=0x${pc.toString(16).toUpperCase()}, usando fallback ASM...\n`));
@@ -2362,7 +2362,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             this.sendEvent(new OutputEvent(`[Debug] Fallback: ASM line ${asmLine} -> Boriel line ${mappedBasLine}\n`));
                         }
                     }
-                    
+
                     // Only update the last mapped Boriel line when we're not currently stopped.
                     if (!this._stopped) {
                         this._lastBasLine = mappedBasLine;
@@ -2387,14 +2387,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 try {
                                     if (!this._debugSocket || this._debugSocket.destroyed) return;
                                     const addrToken = `${pc.toString(16).toUpperCase()}h`;
-                                            try { await this._ensureBreakpointsEnabled(); } catch (e) {}
-                                            const installed = await this._installBreakpoint(addrToken, null);
-                                            if (installed) {
-                                                this.sendEvent(new OutputEvent(`[Debug] Breakpoint automático establecido en ${addrToken} para PC no mapeado; ejecutando run...\n`));
-                                                await this._sendCommand('run');
-                                            } else {
-                                                this.sendEvent(new OutputEvent(`[Debug] No se pudo establecer breakpoint automático en ${addrToken}\n`, 'stderr'));
-                                            }
+                                    try { await this._ensureBreakpointsEnabled(); } catch (e) { }
+                                    const installed = await this._installBreakpoint(addrToken, null);
+                                    if (installed) {
+                                        this.sendEvent(new OutputEvent(`[Debug] Breakpoint automático establecido en ${addrToken} para PC no mapeado; ejecutando run...\n`));
+                                        await this._sendCommand('run');
+                                    } else {
+                                        this.sendEvent(new OutputEvent(`[Debug] No se pudo establecer breakpoint automático en ${addrToken}\n`, 'stderr'));
+                                    }
                                 } catch (err) {
                                     this.sendEvent(new OutputEvent(`⚠ Error estableciendo breakpoint automático en PC 0x${pc.toString(16).toUpperCase()}: ${err.message}\n`, 'stderr'));
                                 }
@@ -2413,7 +2413,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         }
                         // clear/refresh registers map when seeing disassembly line (we don't have full regs here)
                         this._lastRegisters = Object.assign({}, this._lastRegisters || {}, { PC: pc });
-                        
+
                         // Try to map PC to Boriel line using _basLineToAddress (authoritative)
                         let mappedBasLine = null;
                         if (this._basLineToAddress && Object.keys(this._basLineToAddress).length > 0) {
@@ -2424,14 +2424,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 }
                             }
                         }
-                        
+
                         // Fallback: usar ASM line mapping solo si no hay mapeo directo
                         if (!mappedBasLine) {
                             const asmLine = this._addrToAsmLine(pc);
                             this._lastAsmLine = asmLine || null;
                             mappedBasLine = asmLine ? this._getBorielLineFromMapEntry(this._reverseLineMap[asmLine]) : null;
                         }
-                        
+
                         if (!this._stopped) this._lastBasLine = mappedBasLine;
                         // No mostrar mensaje aquí para evitar duplicados (ya se mostró arriba)
                     }
@@ -2469,7 +2469,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 // Detectar mensajes de carga de cinta y lanzar reproducción automática
                 if ((low.includes('press break') || low.includes('loading') || low.includes('loading tape')) && !this._tapeAutoPlayed) {
                     // intentar reproducir la cinta y continuar la ejecución
-                    this._tryPlayTapeThenRun().catch(() => {});
+                    this._tryPlayTapeThenRun().catch(() => { });
                 }
                 // Detectar breakpoint hit - formatos: "break 92C8h" o "Breakpoint fired: PC=92C8H"
                 if ((low.includes('break') || low.includes('breakpoint')) && /[0-9a-fA-F]+h/i.test(line)) {
@@ -2478,7 +2478,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     if (m) {
                         const addr = parseInt(m[1], 16);
                         this.sendEvent(new OutputEvent(`[Debug] Detectado breakpoint hit en 0x${addr.toString(16).toUpperCase()}\n`));
-                        
+
                         // Try to map using _basLineToAddress first (authoritative)
                         let basLine = null;
                         if (this._basLineToAddress && Object.keys(this._basLineToAddress).length > 0) {
@@ -2489,7 +2489,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 }
                             }
                         }
-                        
+
                         // Fallback: mapear addr -> asm line -> bas line
                         if (!basLine && this._asmLineToAddress) {
                             // buscar la línea ASM exacta o la más cercana
@@ -2518,7 +2518,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             this._lastBasLine = basLine;
                             this.sendEvent(new OutputEvent(`[Debug] Breakpoint en línea Boriel: ${basLine}\n`));
                         }
-                        
+
                         this._stopped = true;
                         this.sendEvent(new StoppedEvent('breakpoint', 1));
                     }
@@ -2576,9 +2576,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this._userBreakpointsByFile[sourcePath] = new Set(
                     (clientLines || []).map(n => parseInt(n, 10)).filter(n => !isNaN(n))
                 );
-                this.sendEvent(new OutputEvent(`[Debug] Breakpoints de usuario en ${path.basename(sourcePath)}: ${Array.from(this._userBreakpointsByFile[sourcePath]).sort((a,b)=>a-b).join(',')}\n`));
+                this.sendEvent(new OutputEvent(`[Debug] Breakpoints de usuario en ${path.basename(sourcePath)}: ${Array.from(this._userBreakpointsByFile[sourcePath]).sort((a, b) => a - b).join(',')}\n`));
             }
-        } catch (e) {}
+        } catch (e) { }
 
         const haveConnection = this._debugSocket && !this._debugSocket.destroyed;
 
@@ -2591,7 +2591,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     this.sendEvent(new OutputEvent(`[Debug] Breakpoint ${path.basename(sourcePath)}:${clientLine} → 0x${addr.toString(16).toUpperCase()}\n`));
                     try {
                         if (haveConnection) {
-                            try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+                            try { await this._ensureBreakpointsEnabled(); } catch (e) { }
                             const installed = await this._installBreakpoint(addrToken, clientLine);
                             breakpoints.push({ verified: !!installed, line: clientLine });
                         } else {
@@ -2629,8 +2629,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             const nextUser = this._getNextUserBreakpointAfter(current);
             if (nextUser && this._basLineToAddress && this._basLineToAddress[nextUser]) {
                 const addrNum = this._basLineToAddress[nextUser];
-                const hexNoPrefix = parseInt(addrNum,10).toString(16).toUpperCase();
-                try { await this._ensureBreakpointsEnabled(); } catch (e) {}
+                const hexNoPrefix = parseInt(addrNum, 10).toString(16).toUpperCase();
+                try { await this._ensureBreakpointsEnabled(); } catch (e) { }
                 const cmd = `set-breakpoint 2 PC=${hexNoPrefix}H`;
                 this.sendEvent(new OutputEvent(`[Debug] continue: instalando breakpoint temporal en siguiente breakpoint usuario Boriel ${nextUser} (addr ${hexNoPrefix}H)\n`));
                 this.sendEvent(new OutputEvent(`> ${cmd}\n`, 'console'));
@@ -2648,7 +2648,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             // Ejecutar hasta el siguiente breakpoint y esperar respuesta (hasta 30s)
             const runResp = await this._sendCommandAndWait('run', 30000);
-            this.sendEvent(new OutputEvent(`[Debug] continue detenido: ${String(runResp).replace(/\n/g,' ').slice(0, 120)}\n`));
+            this.sendEvent(new OutputEvent(`[Debug] continue detenido: ${String(runResp).replace(/\n/g, ' ').slice(0, 120)}\n`));
 
             // Mapear PC de la respuesta
             const pcMatch = String(runResp).match(/PC=([0-9A-Fa-f]{1,4})/i);
@@ -2730,39 +2730,39 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // FAST EXIT OPTIMIZATION: Check if we're on the last line of a function (current OR previous PC)
             let usedFastExit = false;
             const endOfSubInfo = this._checkIsEndOfSubAtCurrentOrPreviousPC();
-            
+
             if (endOfSubInfo) {
                 this.sendEvent(new OutputEvent(`[Debug][nextRequest] isEndOfSub=true detected at ${endOfSubInfo.location} PC 0x${endOfSubInfo.pc.toString(16).toUpperCase()}. Using fast exit strategy.\n`));
                 this.sendEvent(new OutputEvent(`[Debug][nextRequest] MapEntry: ${JSON.stringify(endOfSubInfo.mapEntry)}\n`));
-                
+
                 // IMPROVED STRATEGY: Use stepOutAddress if available for precise breakpoint + run
                 if (endOfSubInfo.mapEntry.stepOutAddress) {
                     this.sendEvent(new OutputEvent(`[Debug][nextRequest] Using precise breakpoint + run strategy with stepOutAddress=0x${endOfSubInfo.mapEntry.stepOutAddress.toString(16).toUpperCase()}.\n`));
-                    
+
                     try {
                         const returnAddrHex = endOfSubInfo.mapEntry.stepOutAddress.toString(16).toUpperCase();
-                        
+
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Setting breakpoint at stepOutAddress 0x${returnAddrHex}\n`));
-                        
+
                         // Set breakpoint at return address
                         await this._sendCommandAndWait(`set-breakpoint 0x${returnAddrHex}`);
-                        
+
                         // Run to the breakpoint
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Running to return address...\n`));
                         await this._sendCommandAndWait('run');
-                        
+
                         // Remove the temporary breakpoint
                         await this._sendCommandAndWait(`remove-breakpoint 0x${returnAddrHex}`);
-                        
+
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Function exit completed using precise breakpoint strategy.\n`));
                         usedFastExit = true;
-                        
+
                         // Respond immediately since we've completed the step
                         this._stopped = true;
                         this.sendResponse(response);
                         this.sendEvent(new StoppedEvent('step', 1));
                         return;
-                        
+
                     } catch (e) {
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Precise breakpoint strategy failed: ${e.message}. Falling back to step-over.\n`, 'stderr'));
                     }
@@ -2770,51 +2770,51 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 // FALLBACK: Try to estimate return address from previous PC
                 else if (endOfSubInfo.location === 'previous' && this._previousPC) {
                     this.sendEvent(new OutputEvent(`[Debug][nextRequest] No stepOutAddress available, using estimated return address strategy.\n`));
-                    
+
                     try {
                         // Calculate return address: instruction after the CALL that brought us here
                         // For Z80, CALL instructions are typically 3 bytes, but let's use a safer approach
                         // We'll estimate the return address as previousPC + 3 (most CALL instructions)
                         const returnAddress = this._previousPC + 3;
                         const returnAddrHex = returnAddress.toString(16).toUpperCase();
-                        
+
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Setting breakpoint at estimated return address 0x${returnAddrHex}\n`));
-                        
+
                         // Set breakpoint at return address
                         await this._sendCommandAndWait(`set-breakpoint 0x${returnAddrHex}`);
-                        
+
                         // Run to the breakpoint
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Running to return address...\n`));
                         await this._sendCommandAndWait('run');
-                        
+
                         // Remove the temporary breakpoint
                         await this._sendCommandAndWait(`remove-breakpoint 0x${returnAddrHex}`);
-                        
+
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Function exit completed using estimated breakpoint strategy.\n`));
                         usedFastExit = true;
-                        
+
                         // Respond immediately since we've completed the step
                         this._stopped = true;
                         this.sendResponse(response);
                         this.sendEvent(new StoppedEvent('step', 1));
                         return;
-                        
+
                     } catch (e) {
                         this.sendEvent(new OutputEvent(`[Debug][nextRequest] Estimated breakpoint strategy failed: ${e.message}. Falling back to step-over.\n`, 'stderr'));
                     }
                 }
-                
+
                 // FINAL FALLBACK STRATEGY: Single step-over and continue normal stepping
                 this.sendEvent(new OutputEvent(`[Debug][nextRequest] Using step-over fallback strategy for function exit.\n`));
                 try {
                     // Step once to execute the return/exit instruction
                     await this._sendCommandAndWait('cpu-step-over');
                     usedFastExit = true;
-                    
+
                     // Now continue with normal stepping logic to find the next Boriel line
                     this.sendEvent(new OutputEvent(`[Debug][nextRequest] Function exit step completed. Continuing with normal step logic.\n`));
                     // Don't return here - let it fall through to normal stepping logic
-                    
+
                 } catch (e) {
                     this.sendEvent(new OutputEvent(`[Debug][nextRequest] Fast exit step failed: ${e.message}. Falling back to normal step.\n`, 'stderr'));
                     // Fall through to normal logic
@@ -2824,6 +2824,31 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
 
             this.sendEvent(new OutputEvent(`[Debug][nextRequest] Proceeding with normal step over logic.\n`));
+
+            // FAKE STEP OPTIMIZATION: Check if there are multiple Boriel lines pointing to the SAME PC.
+            // If the user steps over a line that generated no code (e.g. DIM), we just advance the reported
+            // Boriel line without actually advancing the CPU.
+            if (this._lastPC && this._lastBasLine && this._sourceFile && this._fileAddrMap && this._fileAddrMap[this._sourceFile]) {
+                const currentPC = parseInt(this._lastPC, 10);
+                const currentBasLine = parseInt(this._lastBasLine, 10);
+
+                // Find all lines in the current file that map to this PC, sorted ascending
+                const linesForThisPC = Object.entries(this._fileAddrMap[this._sourceFile])
+                    .filter(([lineStr, addr]) => parseInt(addr, 10) === currentPC)
+                    .map(([lineStr]) => parseInt(lineStr, 10))
+                    .sort((a, b) => a - b);
+
+                // If there's a line larger than the current one for the same PC, fake the step
+                const nextVirtualLine = linesForThisPC.find(line => line > currentBasLine);
+                if (nextVirtualLine) {
+                    this.sendEvent(new OutputEvent(`[Debug][nextRequest] Fake step: advancing Boriel line from ${currentBasLine} to ${nextVirtualLine} without CPU step (same PC 0x${currentPC.toString(16).toUpperCase()})\n`));
+                    this._lastBasLine = nextVirtualLine;
+                    this._stopped = true;
+                    this.sendResponse(response);
+                    this.sendEvent(new StoppedEvent('step', 1));
+                    return;
+                }
+            }
 
             // NORMAL STEP OVER LOGIC: Continue with existing implementation
             // New strategy: perform CPU steps until the current PC matches one of the mapped addresses
@@ -2838,14 +2863,14 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // If we're already at the last mapped Boriel line, 'step over' should run
             // UNLESS we just used the fast exit strategy - in that case continue stepping normally
             try {
-                const basKeys = this._basLineToAddress ? Object.keys(this._basLineToAddress).map(k => parseInt(k,10)).filter(n=>!isNaN(n)) : [];
+                const basKeys = this._basLineToAddress ? Object.keys(this._basLineToAddress).map(k => parseInt(k, 10)).filter(n => !isNaN(n)) : [];
                 // Use only the main source file's line numbers so that sprite/include file lines
                 // (e.g. sprite.bas:316) don't inflate the "last mapped line" boundary.
                 const mainFileLines = (this._fileAddrMap && this._sourceFile && this._fileAddrMap[this._sourceFile])
                     ? Object.keys(this._fileAddrMap[this._sourceFile]).map(k => parseInt(k, 10)).filter(n => !isNaN(n))
                     : basKeys;
                 const maxBas = mainFileLines.length ? Math.max(...mainFileLines) : (basKeys.length ? Math.max(...basKeys) : null);
-                if (!usedFastExit && maxBas !== null && this._lastBasLine && parseInt(this._lastBasLine,10) === maxBas) {
+                if (!usedFastExit && maxBas !== null && this._lastBasLine && parseInt(this._lastBasLine, 10) === maxBas) {
                     this.sendEvent(new OutputEvent(`[Debug] Step Over requested but current Boriel line ${this._lastBasLine} is last mapped line -> issuing run\n`));
                     setImmediate(async () => {
                         try { await this._sendCommand('run'); } catch (e) { this.sendEvent(new OutputEvent(`[Debug] Error issuing run: ${e.message}\n`, 'stderr')); }
@@ -2863,7 +2888,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             const maxSteps = 50; // Límite de seguridad reducido para evitar ejecución completa accidental
             let steps = 0;
             let foundBasLine = null;
-            
+
             this.sendEvent(new OutputEvent(`[Debug] Iniciando step-over, mapeadas ${Object.keys(this._addrToBasLine).length} direcciones
 `));
 
@@ -2936,17 +2961,17 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // FAST EXIT OPTIMIZATION FOR STEP INTO: Check if current or previous line has isEndOfSub
             let usedFastExit = false;
             const endOfSubInfo = this._checkIsEndOfSubAtCurrentOrPreviousPC();
-            
+
             if (endOfSubInfo) {
                 this.sendEvent(new OutputEvent(`[Debug][stepInRequest] isEndOfSub=true detected at ${endOfSubInfo.location} PC 0x${endOfSubInfo.pc.toString(16).toUpperCase()}. Using fast exit strategy.\n`));
-                
+
                 try {
                     // Use step-over to exit the function quickly
                     await this._sendCommandAndWait('cpu-step-over');
                     usedFastExit = true;
-                    
+
                     this.sendEvent(new OutputEvent(`[Debug][stepInRequest] Function exit step completed. Continuing with normal step logic.\n`));
-                    
+
                 } catch (e) {
                     this.sendEvent(new OutputEvent(`[Debug][stepInRequest] Fast exit step failed: ${e.message}. Falling back to normal step.\n`, 'stderr'));
                 }
@@ -3031,12 +3056,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Try to locate a sensible .bas source file if the stored path is missing
             const candidates = [];
             try {
-                    if (this._program) {
-                        // Prefer the original main.bas corresponding to the TAP (not the preprocessed file)
-                        const preferMain = this._program.replace(/\.tap$/i, '.bas');
-                        candidates.push(preferMain);
-                    }
-                    if (this._asmFile) candidates.push(this._asmFile.replace(/\.asm$/i, '.bas'));
+                if (this._program) {
+                    // Prefer the original main.bas corresponding to the TAP (not the preprocessed file)
+                    const preferMain = this._program.replace(/\.tap$/i, '.bas');
+                    candidates.push(preferMain);
+                }
+                if (this._asmFile) candidates.push(this._asmFile.replace(/\.asm$/i, '.bas'));
                 // same folder as program
                 if (this._program) {
                     const progDir = path.dirname(this._program);
@@ -3048,7 +3073,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const cwdBase = path.basename(process.cwd());
                     candidates.push(path.join(process.cwd(), cwdBase + '.bas'));
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             let found = null;
             // Prefer exact main.bas (avoid selecting files from .debug folder)
@@ -3106,7 +3131,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     scopesRequest(response, args) {
         const scopes = [
             new Scope("Registros", this._variableHandles.create("registers"), true),  // collapsed
-            new Scope("Memoria",   this._variableHandles.create("memory"),    true)   // collapsed
+            new Scope("Memoria", this._variableHandles.create("memory"), true)   // collapsed
         ];
 
         // Add Globals scope if we have detected user variables (starting with _)
@@ -3115,7 +3140,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             if (userVars.length > 0) {
                 scopes.unshift(new Scope("Globals", this._variableHandles.create("globals"), false)); // expanded, first
             }
-        } catch (e) {}
+        } catch (e) { }
 
         response.body = {
             scopes: scopes
@@ -3130,7 +3155,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         if (id === "registers") {
             // Mostrar registros conocidos (cached) y mapear PC a línea Boriel si está disponible
             const regs = this._lastRegisters || {};
-            const regNames = Object.keys(regs).length ? Object.keys(regs) : ['PC','SP','AF','A','B','C','D','E','I','R'];
+            const regNames = Object.keys(regs).length ? Object.keys(regs) : ['PC', 'SP', 'AF', 'A', 'B', 'C', 'D', 'E', 'I', 'R'];
             for (const r of regNames) {
                 const v = regs[r] !== undefined ? `0x${regs[r].toString(16).toUpperCase().padStart(4, '0')}` : 'n/a';
                 variables.push({ name: r, value: v, variablesReference: 0 });
@@ -3267,7 +3292,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                         } else if (g.type === 'reserve') {
                                             display = `reserve ${g.size} bytes @ 0x${hexAddr}`;
                                         } else {
-                                            display = `${bytes.map(b => b.toString(16).padStart(2,'0')).join(' ')} (len=${bytes.length})`;
+                                            display = `${bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')} (len=${bytes.length})`;
                                         }
                                     } else {
                                         display = `${g.type} @ 0x${hexAddr}`;
