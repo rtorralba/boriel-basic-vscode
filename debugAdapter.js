@@ -978,6 +978,35 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
         }
 
+        // Build linesAtPC to track chronological order of lines mapped to the same PC
+        this._linesAtPC = {};
+        if (asmFile && fs.existsSync(asmFile)) {
+            try {
+                const asmLines = fs.readFileSync(asmFile, 'utf8').split('\n');
+                for (let i = 0; i < asmLines.length; i++) {
+                    const l = asmLines[i];
+                    const m = l.match(/BAS___(\d+)___([A-Za-z0-9_]+)\s*:/);
+                    if (m) {
+                        const bas = parseInt(m[1], 10);
+                        const filenamePart = m[2];
+                        const extractedSourceFile = filenamePart.replace(/__/g, '.').replace(/_/g, '/');
+                        const absSourceFile = path.join(workspaceDir, extractedSourceFile);
+                        
+                        const addr = this._fileAddrMap && this._fileAddrMap[absSourceFile] && this._fileAddrMap[absSourceFile][bas];
+                        if (addr !== undefined) {
+                            if (!this._linesAtPC[addr]) this._linesAtPC[addr] = [];
+                            const arr = this._linesAtPC[addr];
+                            if (arr.length === 0 || arr[arr.length - 1].file !== absSourceFile || arr[arr.length - 1].line !== bas) {
+                                arr.push({ file: absSourceFile, line: bas });
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                this.sendEvent(new OutputEvent(`[Debug] Error al construir mapa chronological linesAtPC: ${e.message}\n`, 'stderr'));
+            }
+        }
+
         // Build global variable map from ASM: labels followed by data directives
         try {
             await this._buildGlobalVariableMap(asmFile);
@@ -1036,7 +1065,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                             borielLine: borielLineNum,
                             sourceFile: lineSourceFile,
                             isEndOfSub: endOfSubLines.has(borielLineNum),
-                            stepOutAddress: stepOutAddress
+                            stepOutAddress: stepOutAddress,
+                            virtualLines: this._linesAtPC[addr] || []
                         };
                         try {
                             const addrKey = parseInt(addr, 10);
@@ -2845,25 +2875,30 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // FAKE STEP OPTIMIZATION: Check if there are multiple Boriel lines pointing to the SAME PC.
             // If the user steps over a line that generated no code (e.g. DIM), we just advance the reported
             // Boriel line without actually advancing the CPU.
-            if (this._lastPC && this._lastBasLine && this._sourceFile && this._fileAddrMap && this._fileAddrMap[this._sourceFile]) {
+            if (this._lastPC && this._lastBasLine && this._lastSourceFile && this._reverseLineMap) {
                 const currentPC = parseInt(this._lastPC, 10);
-                const currentBasLine = parseInt(this._lastBasLine, 10);
+                const currentAddrHex = `${currentPC.toString(16).toUpperCase()}H`;
+                const mapEntry = this._reverseLineMap[currentAddrHex];
 
-                // Find all lines in the current file that map to this PC, sorted ascending
-                const linesForThisPC = Object.entries(this._fileAddrMap[this._sourceFile])
-                    .filter(([lineStr, addr]) => parseInt(addr, 10) === currentPC)
-                    .map(([lineStr]) => parseInt(lineStr, 10))
-                    .sort((a, b) => a - b);
+                if (mapEntry && mapEntry.virtualLines && mapEntry.virtualLines.length > 1) {
+                    const currentFileNorm = path.normalize(this._lastSourceFile).toLowerCase();
+                    const currentLine = parseInt(this._lastBasLine, 10);
 
-                // If there's a line larger than the current one for the same PC, fake the step
-                const nextVirtualLine = linesForThisPC.find(line => line > currentBasLine);
-                if (nextVirtualLine) {
-                    this.sendEvent(new OutputEvent(`[Debug][nextRequest] Fake step: advancing Boriel line from ${currentBasLine} to ${nextVirtualLine} without CPU step (same PC 0x${currentPC.toString(16).toUpperCase()})\n`));
-                    this._lastBasLine = nextVirtualLine;
-                    this._stopped = true;
-                    this.sendResponse(response);
-                    this.sendEvent(new StoppedEvent('step', 1));
-                    return;
+                    const currentIndex = mapEntry.virtualLines.findIndex(v => 
+                        path.normalize(v.file).toLowerCase() === currentFileNorm && 
+                        v.line === currentLine
+                    );
+
+                    if (currentIndex !== -1 && currentIndex + 1 < mapEntry.virtualLines.length) {
+                        const nextVirtual = mapEntry.virtualLines[currentIndex + 1];
+                        this.sendEvent(new OutputEvent(`[Debug][nextRequest] Fake step: advancing from ${path.basename(this._lastSourceFile)}:${currentLine} to ${path.basename(nextVirtual.file)}:${nextVirtual.line} without CPU step (same PC 0x${currentPC.toString(16).toUpperCase()})\n`));
+                        this._lastBasLine = nextVirtual.line;
+                        this._lastSourceFile = nextVirtual.file;
+                        this._stopped = true;
+                        this.sendResponse(response);
+                        this.sendEvent(new StoppedEvent('step', 1));
+                        return;
+                    }
                 }
             }
 
@@ -2973,6 +3008,34 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendResponse(response);
                 this.sendEvent(new StoppedEvent('step', 1));
                 return;
+            }
+
+            // FAKE STEP OPTIMIZATION FOR STEP INTO
+            if (this._lastPC && this._lastBasLine && this._lastSourceFile && this._reverseLineMap) {
+                const currentPC = parseInt(this._lastPC, 10);
+                const currentAddrHex = `${currentPC.toString(16).toUpperCase()}H`;
+                const mapEntry = this._reverseLineMap[currentAddrHex];
+
+                if (mapEntry && mapEntry.virtualLines && mapEntry.virtualLines.length > 1) {
+                    const currentFileNorm = path.normalize(this._lastSourceFile).toLowerCase();
+                    const currentLine = parseInt(this._lastBasLine, 10);
+
+                    const currentIndex = mapEntry.virtualLines.findIndex(v => 
+                        path.normalize(v.file).toLowerCase() === currentFileNorm && 
+                        v.line === currentLine
+                    );
+
+                    if (currentIndex !== -1 && currentIndex + 1 < mapEntry.virtualLines.length) {
+                        const nextVirtual = mapEntry.virtualLines[currentIndex + 1];
+                        this.sendEvent(new OutputEvent(`[Debug][stepInRequest] Fake step: advancing from ${path.basename(this._lastSourceFile)}:${currentLine} to ${path.basename(nextVirtual.file)}:${nextVirtual.line} without CPU step (same PC 0x${currentPC.toString(16).toUpperCase()})\n`));
+                        this._lastBasLine = nextVirtual.line;
+                        this._lastSourceFile = nextVirtual.file;
+                        this._stopped = true;
+                        this.sendResponse(response);
+                        this.sendEvent(new StoppedEvent('step', 1));
+                        return;
+                    }
+                }
             }
 
             // FAST EXIT OPTIMIZATION FOR STEP INTO: Check if current or previous line has isEndOfSub
