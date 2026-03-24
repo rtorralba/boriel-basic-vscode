@@ -109,9 +109,9 @@ function compileBorielBasic(options = {}) {
 
         // Construir comando de compilación
         const args = [
-            `-O=${optimizeLevel}`,
-            `-S=${org}`,
-            `-H=${heapSize}`,
+            `-O${optimizeLevel}`,
+            `-S${org}`,
+            `-H${heapSize}`,
             effectiveIncludeBasicLoader ? '-B' : '',
             effectiveAutorun ? '-a' : '',
             effectiveOutputFormat === 'tap' ? '--output-format=tap' : '-T',
