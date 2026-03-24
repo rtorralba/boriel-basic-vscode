@@ -1,20 +1,10 @@
-#include <putchars.bas>
+#include "lib/definitions.bas"
 #include "lib/functions.bas"
-#include "data/tiles.bas"
-#include "data/sprites.bas"
-#include "data/maps.bas"
 
-Dim person1 As String = "Pepe"
-Dim person2 As String = "Luis"
+Print "Hello, world!"
 
-Print "Hello, World!"
-Print "Hello, " + person1 + "!"
-Print "Hello, " + person2 + "!"
+checkScoreAndPrint()
 
-greetings()
+score = 250
 
-mapDraw(2)
-
-Sub greetUser(name As String)
-    Print "Hello, " + name + "!"
-End Sub
+checkScoreAndPrint()
