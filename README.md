@@ -31,10 +31,12 @@ Para depurar un programa necesitas configurar un archivo `.vscode/launch.json` e
         {
             "type": "borielbasic",
             "request": "launch",
-            "name": "Debug con ZEsarUX",
-            "program": "${workspaceFolder}/dist/main.tap",
-            "zesaruxPath": "/ruta/a/zesarux",
-            "debugPort": 10000
+            "name": "Debug Boriel Basic (ZEsarUX)",
+            "program": "${workspaceFolder}\\dist\\main.tap",
+            "sourceFile": "src/main.bas",
+            "zesaruxPath": "C:\\path\\to\\ZEsarUX\\zesarux.exe",
+            "debugPort": 10000,
+            "stopOnEntry": false
         }
     ]
 }
