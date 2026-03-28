@@ -51,10 +51,9 @@ Para depurar un programa necesitas configurar un archivo `.vscode/launch.json` e
 
 **Pasos para depurar:**
 
-1. Compila tu proyecto (`Ctrl+Shift+P` → `Boriel Basic: Compile`) para generar el `.tap`.
-2. Añade puntos de ruptura en tu código `.bas` haciendo clic en el margen izquierdo del editor.
-3. Pulsa `F5` o ve a la vista de Depuración (`Ctrl+Shift+D`) y selecciona la configuración `Debug con ZEsarUX`.
-4. ZEsarUX se lanzará automáticamente y la ejecución se detendrá en los breakpoints definidos.
+1. Añade puntos de ruptura en tu código `.bas` haciendo clic en el margen izquierdo del editor.
+2. Pulsa `F5` o ve a la vista de Depuración (`Ctrl+Shift+D`) y selecciona la configuración `Debug con ZEsarUX`.
+3. ZEsarUX se lanzará automáticamente y la ejecución se detendrá en los breakpoints definidos.
 
 > **Nota**: ZEsarUX debe estar instalado en tu sistema. Descárgalo desde [https://github.com/chernandezba/zesarux](https://github.com/chernandezba/zesarux).
 
