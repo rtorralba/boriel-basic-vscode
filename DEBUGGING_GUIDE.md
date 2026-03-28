@@ -1,261 +1,134 @@
 # Guía de Depuración con ZEsarUX
 
-## Conceptos Básicos
+## Cómo funciona el debugger
 
-ZEsarUX tiene dos formas principales de depuración:
+La extensión incluye un **debug adapter nativo de VS Code** que controla ZEsarUX de forma completamente automática. No es necesario lanzar ZEsarUX manualmente ni conectarse por telnet.
 
-1. **Debugger Visual (F11)** - Interfaz gráfica integrada
-2. **Remote Protocol** - Control por comandos desde external (lo que usamos en VS Code)
+Al iniciar una sesión de depuración, la extensión:
+1. Compila el `.bas` automáticamente (con `-O0` para preservar la correspondencia de líneas).
+2. Genera un ASM intermedio en la carpeta `.debug/` e invoca `zxbasm -d` para extraer las direcciones de los marcadores `BAS___N___filename`.
+3. Construye el mapa `línea Boriel → dirección de memoria`.
+4. Lanza ZEsarUX con el protocolo remoto habilitado.
+5. Se conecta por socket al puerto de debug y carga el programa con `smartload`.
+6. Pausa la ejecución en el punto de entrada (si `stopOnEntry: true`).
 
-## Método 1: Debugger Visual de ZEsarUX (Recomendado para aprender)
+## Configuración (launch.json)
 
-### Paso 1: Lanzar ZEsarUX con tu programa
+Añade una configuración de tipo `borielbasic` en `.vscode/launch.json`:
 
-```bash
-zesarux --machine 128k --tape dist/main.tap
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "borielbasic",
+            "request": "launch",
+            "name": "Debug con ZEsarUX",
+            "program": "${workspaceFolder}/dist/main.tap",
+            "zesaruxPath": "/ruta/a/zesarux",
+            "debugPort": 10000,
+            "stopOnEntry": true,
+            "sourceFile": "src/main.bas"
+        }
+    ]
+}
 ```
 
-### Paso 2: Cargar el programa en el Spectrum
+### Propiedades
 
-Una vez arranque ZEsarUX:
-- El Spectrum mostrará la pantalla normal
-- Escribe: `LOAD ""`
-- Presiona ENTER
-- El programa se cargará desde la cinta
+| Propiedad | Tipo | Descripción | Por defecto |
+|-----------|------|-------------|-------------|
+| `program` | string | Ruta al `.tap` de salida | `${workspaceFolder}/dist/main.tap` |
+| `zesaruxPath` | string | Ruta al ejecutable de ZEsarUX | `zesarux` (en PATH) |
+| `debugPort` | integer | Puerto del protocolo remoto de ZEsarUX | `10000` |
+| `stopOnEntry` | boolean | Pausar al inicio del programa | `true` |
+| `sourceFile` | string | Archivo `.bas` principal (relativo al workspace o absoluto) | `borielBasic.mainFile` o `main.bas` |
 
-### Paso 3: Abrir el Debugger
+Si no se especifica `zesaruxPath`, se usa el valor de `borielBasic.zesaruxPath` en la configuración de VS Code.
 
-Presiona **F11** - se abrirá el debugger con varias ventanas:
+## Cómo iniciar el debugger
 
-```
-┌─────────────────────────────────────────────┐
-│ Registros    │ Memory Dump │ Disassembler  │
-│ AF: 1234     │ 8000: 21... │ 8000: LD HL,..│
-│ BC: 5678     │ 8001: 00... │ 8003: CALL... │
-│ PC: 8000     │ ...         │ ...           │
-└─────────────────────────────────────────────┘
-```
+1. Configura `zesaruxPath` apuntando a tu instalación de ZEsarUX.
+2. Presiona **F5** o usa el menú _Run → Start Debugging_.
+3. VS Code compilará el proyecto, lanzará ZEsarUX y pausará en la primera línea.
 
-### Paso 4: Cargar los símbolos del archivo .asm
-
-En el debugger, puedes cargar tu archivo .asm para tener nombres simbólicos:
-
-1. Presiona **F5** en el debugger (abre el menú)
-2. Busca "Load source code" o "Load symbols"
-3. Selecciona tu archivo `dist/main.asm`
-
-Ahora verás nombres en vez de direcciones:
-```
-8000: LD HL, myVariable    ; en vez de LD HL, (0x5C00)
-8003: CALL myFunction      ; en vez de CALL 0x8100
-```
-
-### Paso 5: Establecer Breakpoints
-
-Hay varias formas:
-
-**Por dirección de memoria:**
-```
-- En el disassembler, mueve el cursor a la línea deseada
-- Presiona 'B' para toggle breakpoint
-- Verás un símbolo (●) en esa línea
-```
-
-**Por símbolo (si cargaste el .asm):**
-```
-- Presiona F5 → "Set breakpoint"
-- Escribe el nombre de la función/etiqueta: "myFunction"
-```
-
-**Por condición:**
-```
-- F5 → "Set conditional breakpoint"
-- Ejemplo: "PC=8000H AND A=10"
-```
-
-### Paso 6: Ejecutar y Depurar
-
-**Comandos principales:**
-
-- **F5** - Menú de depuración
-- **F6** - Step Into (ejecuta una instrucción, entra en CALLs)
-- **F7** - Step Over (ejecuta una instrucción, salta CALLs)
-- **F8** - Run (ejecuta hasta breakpoint)
-- **F9** - Run to cursor (ejecuta hasta la línea del cursor)
-- **F10** - View/Edit memory
-- **F11** - Toggle debugger on/off
-
-**Inspeccionar memoria:**
-- En el memory dump, puedes ver y editar la memoria
-- Escribe la dirección que quieres ver
-- Presiona Enter para saltar a esa dirección
-
-**Ver registros:**
-- Los registros se actualizan en cada step
-- Puedes ver valores en decimal, hexadecimal, binario
-
-### Paso 7: Seguir el flujo de tu programa
-
-Con los símbolos cargados, puedes:
-
-1. **Ver qué línea de .asm se está ejecutando**
-   - El PC (Program Counter) te indica la dirección actual
-   - En el disassembler verás la instrucción con su símbolo
-
-2. **Relacionar con tu código Boriel**
-   - Mira los comentarios en el .asm (las directivas #line)
-   - Ejemplo: `#line 4 "main.bas"` significa que esa parte del ASM viene de la línea 4 de main.bas
-
-3. **Inspeccionar variables**
-   - Las variables Boriel se mapean a direcciones de memoria
-   - En el .asm verás etiquetas como `_myVariable` con su dirección
-   - Usa F10 para ver esa dirección en memoria
-
-## Método 2: Remote Protocol (lo que usa VS Code)
-
-### Conectar por telnet para probar comandos
-
-```bash
-# En terminal 1: Lanzar ZEsarUX
-zesarux --machine 128k --tape dist/main.tap \
-        --enable-remoteprotocol \
-        --remoteprotocol-port 10000
-
-# En terminal 2: Conectar con telnet
-telnet localhost 10000
-```
-
-### Comandos disponibles
-
-Una vez conectado, puedes enviar comandos:
-
-```
-> help                           # Lista todos los comandos
-> get-registers                  # Ver registros de CPU
-> read-memory 8000 10            # Leer 10 bytes desde 0x8000
-> cpu-step                       # Ejecutar una instrucción
-> enter-cpu-step                 # Entrar en modo step
-> exit-cpu-step                  # Salir de modo step
-> run                           # Ejecutar hasta breakpoint
-> set-breakpoint 0 8000         # Breakpoint en dirección 0x8000
-> disassemble 8000 10           # Desensamblar 10 instrucciones desde 0x8000
-```
-
-### Ejemplo de sesión:
-
-```bash
-$ telnet localhost 10000
-Trying 127.0.0.1...
-Connected to localhost.
-
-command> help
-Available commands:
-about, assemble, clear-membreakpoints, cpu-history, ...
-
-command> get-registers
-AF=0044 BC=0000 HL=0000 DE=0000 IX=0000 IY=5C3A SP=FF4C PC=0000
-...
-
-command> enter-cpu-step
-command> cpu-step
-command> get-registers
-AF=0044 BC=0000 HL=0000 DE=0000 IX=0000 IY=5C3A SP=FF4C PC=0001
-...
-```
-
-## Método 3: Combinación (Manual + Remote Protocol)
-
-Lo más útil para desarrollar la extensión:
-
-1. **Lanza ZEsarUX con remote protocol**
-2. **Abre el debugger visual (F11)** para ver qué pasa
-3. **Envía comandos desde VS Code** (o telnet)
-4. **Observa en el debugger** cómo responde ZEsarUX
-
-Esto te permite:
-- Ver visualmente qué hacen los comandos
-- Entender el estado de la máquina
-- Verificar que los breakpoints funcionan
-- Confirmar que el mapeo de líneas es correcto
-
-## Flujo típico de depuración
-
-### 1. Preparación (automático en VS Code)
-```
-- Compilar: main.bas → main.tap + main.asm
-- Generar mapeo: main.linemap.json
-- Lanzar ZEsarUX con remote protocol
-```
-
-### 2. Inicio del programa
-```
-- ZEsarUX arranca
-- Se conecta el debug adapter
-- Se envía: enter-cpu-step (para pausar)
-- Estado: CPU en pausa, esperando comandos
-```
-
-### 3. Usuario establece breakpoint en línea 5 de main.bas
-```
-- VS Code busca en linemap.json: línea 5 → líneas ASM [120, 121, 122]
-- Lee main.asm: línea 120 → dirección 0x8050
-- Envía a ZEsarUX: set-breakpoint 0 8050
-```
-
-### 4. Usuario presiona "Continue"
-```
-- VS Code envía: run
-- ZEsarUX ejecuta hasta hit breakpoint en 0x8050
-- ZEsarUX envía evento de pausa
-- VS Code lee PC: get-registers → PC=8050
-- Busca 0x8050 en main.asm → línea 120 ASM
-- Busca línea 120 en reverse linemap → línea 5 de main.bas
-- VS Code muestra cursor en línea 5 de main.bas
-```
-
-### 5. Usuario presiona "Step Over"
-```
-- VS Code envía: cpu-step-over
-- Se ejecuta la instrucción actual
-- Se lee el nuevo PC
-- Se mapea de nuevo a línea de código Boriel
-```
-
-## Comandos útiles para implementar en la extensión
-
-### Control de ejecución
-```
-enter-cpu-step              # Entrar en modo debug (necesario primero)
-exit-cpu-step               # Salir de modo debug
-run                         # Ejecutar hasta breakpoint
-cpu-step                    # Step into (siguiente instrucción)
-cpu-step-over               # Step over (salta CALLs)
-```
+## Funcionalidades disponibles
 
 ### Breakpoints
+
+Coloca breakpoints directamente en el editor sobre los archivos `.bas`. La extensión traduce automáticamente el número de línea Boriel a la dirección de memoria correspondiente y la envía a ZEsarUX con `set-breakpoint`.
+
+Se admiten breakpoints en archivos incluidos (no solo en el archivo principal).
+
+### Control de ejecución
+
+| Acción VS Code | Comando ZEsarUX enviado |
+|----------------|------------------------|
+| Continue (F5) | `run` |
+| Step Over (F10) | `cpu-step-over` |
+| Step Into (F11) | `cpu-step` |
+| Pause | `enter-cpu-step` |
+| Stop | termina el proceso ZEsarUX |
+
+### Variables
+
+El panel **Variables** de VS Code muestra las variables globales declaradas en el programa. La extensión las detecta analizando el ASM generado (etiquetas seguidas de directivas `DB`/`DW`/`DS`) y lee su valor en tiempo real desde la memoria del emulador con `read-memory`.
+
+Se soportan los tipos: `BYTE`, `UBYTE`, `INTEGER`, `UINTEGER`, `LONG`, `ULONG`, `FIXED`, `FLOAT`, `STRING` y arrays de todos ellos.
+
+### Stack trace
+
+El panel **Call Stack** muestra la posición actual en el código Boriel. Al hacer step, VS Code lee el nuevo valor de `PC` con `get-registers` y lo traduce de vuelta a la línea de código fuente usando el mapa generado.
+
+## Archivos intermedios (.debug/)
+
+Durante cada sesión de depuración la extensión crea (y limpia al inicio de cada sesión) la carpeta `.debug/` en la raíz del workspace con los siguientes archivos:
+
+| Archivo | Contenido |
+|---------|-----------|
+| `.debug/<name>.asm` | ASM generado desde el `.bas` preprocesado, con marcadores `BAS___N___filename:` |
+| `.debug/<name>.linemap.json` | Mapa `dirección → { borielLine, sourceFile, isEndOfSub }` generado por `zxbasm -d` |
+| `.debug/<source>.bas` | Versiones preprocesadas de cada `.bas` del proyecto |
+
+## Cómo funciona el mapeo de líneas
+
+El compilador `zxbc` inserta en el ASM etiquetas de la forma:
+
+```asm
+BAS___5___main__bas:
+    LD A, 42
+    ...
+BAS___6___main__bas:
+    ...
 ```
-set-breakpoint NUM ADDRESS           # Establecer breakpoint
-enable-breakpoint NUM               # Activar breakpoint
-disable-breakpoint NUM              # Desactivar breakpoint
-get-breakpoints                     # Listar breakpoints
-clear-membreakpoints                # Borrar todos
+
+La extensión invoca `zxbasm -d` sobre ese ASM y analiza las líneas `Declaring` de la salida, que tienen el formato:
+
+```
+Declaring '.BAS___5___main__bas' (value 92BBh) in 2
 ```
 
-### Inspección
+De ahí extrae que la línea 5 de `main.bas` está en la dirección `0x92BB`. Este proceso es el más fiable porque refleja el valor real calculado por el ensamblador.
+
+Si no se encuentran declaraciones en la salida de `zxbasm` (fallback), la extensión usa una heurística buscando las etiquetas directamente en el texto del ASM.
+
+## Comandos ZEsarUX usados internamente
+
 ```
-get-registers                       # Ver todos los registros
-read-memory ADDRESS LENGTH          # Leer memoria
-disassemble ADDRESS LENGTH          # Desensamblar código
-get-stack-backtrace                # Ver call stack
+enter-cpu-step        # Activar modo step (pausa la CPU)
+exit-cpu-step         # Desactivar modo step
+smartload <path>      # Cargar y ejecutar un .tap directamente
+run                   # Ejecutar hasta el siguiente breakpoint
+cpu-step              # Step into (una instrucción Z80)
+cpu-step-over         # Step over (salta CALLs completos)
+set-breakpoint N ADDR # Establecer breakpoint en dirección hexadecimal ADDR
+enable-breakpoints    # Habilitar el sistema de breakpoints
+get-registers         # Leer registros de la CPU (incluye PC)
+read-memory ADDR LEN  # Leer LEN bytes desde ADDR (para leer variables)
 ```
 
-### Para próximos pasos
+## Requisitos
 
-Una vez entiendas el flujo manual, podemos implementar en VS Code:
-
-1. **BreakpointRequest** - mapear líneas Boriel → direcciones ASM → comandos ZEsarUX
-2. **StackTrace** - leer PC, mapear a línea Boriel, mostrar en VS Code
-3. **ScopesRequest** - leer variables desde memoria (necesitamos símbolos del .asm)
-4. **Continue/Step** - enviar comandos run/cpu-step y actualizar UI
-
-¿Te parece bien empezar probando manualmente con ZEsarUX y telnet para familiarizarte?
+- **ZEsarUX** instalado y accesible en la ruta configurada en `zesaruxPath`.
+- El proyecto debe tener un archivo `.bas` compilable (la extensión compila automáticamente).
+- La carpeta `dist/` se crea automáticamente si no existe.
