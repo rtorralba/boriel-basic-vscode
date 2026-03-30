@@ -1,4 +1,4 @@
-    const path = require('path');
+const path = require('path');
 const vscode = require('vscode');
 const {
     LanguageClient,
@@ -50,18 +50,25 @@ function compileBorielBasic(options = {}) {
         // Determinar el archivo fuente a usar
         const editor = vscode.window.activeTextEditor;
         let sourceFilePath = null;
-        
-        if (mainFile) {
+
+        if (options.sourceFile) {
+            sourceFilePath = path.isAbsolute(options.sourceFile) ? options.sourceFile : path.join(workspaceFolder, options.sourceFile);
+            if (!fs.existsSync(sourceFilePath)) {
+                sourceFilePath = null;
+            }
+        }
+
+        if (!sourceFilePath && mainFile) {
             sourceFilePath = path.isAbsolute(mainFile) ? mainFile : path.join(workspaceFolder, mainFile);
             if (!fs.existsSync(sourceFilePath)) {
                 sourceFilePath = null;
             }
         }
-        
+
         if (!sourceFilePath && editor && editor.document && editor.document.uri) {
             sourceFilePath = editor.document.uri.fsPath;
         }
-        
+
         if (!sourceFilePath) {
             const workspaceMain = path.join(workspaceFolder, 'main.bas');
             if (fs.existsSync(workspaceMain)) {
@@ -118,7 +125,7 @@ function compileBorielBasic(options = {}) {
         ].filter(arg => arg !== '');
 
         const command = `${bin} ${args.join(' ')} "${sourceFilePath}" -o "${outputFile}"`;
-        
+
         console.log(`[Compilación] Ejecutando comando: ${command}`);
 
         let outputChannel = vscode.window.createOutputChannel('Boriel Basic');
@@ -127,7 +134,7 @@ function compileBorielBasic(options = {}) {
         outputChannel.appendLine('=== Iniciando compilación ===');
         outputChannel.appendLine(`Archivo fuente: ${sourceFilePath}`);
         outputChannel.appendLine(`Archivo salida: ${outputFile}\n`);
-        
+
         // Ejecutar compilación
         child_process.exec(command, { cwd: workspaceFolder }, (error, stdout, stderr) => {
             if (error) {
@@ -215,7 +222,7 @@ async function ensureZXP2BorielBinary(context) {
                 res.pipe(file);
                 file.on('finish', () => { file.close(resolve); });
             });
-            req.on('error', (e) => { try { fs.unlinkSync(outPath); } catch (_) {} ; reject(e); });
+            req.on('error', (e) => { try { fs.unlinkSync(outPath); } catch (_) { }; reject(e); });
         });
         if (process.platform !== 'win32') {
             try { fs.chmodSync(outPath, 0o755); } catch (e) { /* ignore */ }
@@ -224,7 +231,7 @@ async function ensureZXP2BorielBinary(context) {
         return outPath;
     } catch (err) {
         vscode.window.showErrorMessage('Error descargando zxp2boriel: ' + (err.message || err));
-        try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
+        try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) { }
         return null;
     }
 }
@@ -799,6 +806,54 @@ function activate(context) {
         updateZXP2BorielBinary(context);
     });
 
+    // Registrar el comando "borielBasic.compileAndRun"
+    console.log('[Extension] Registrando comando borielBasic.compileAndRun');
+    const compileAndRunCommand = vscode.commands.registerCommand('borielBasic.compileAndRun', async () => {
+        console.log('[Extension] Comando borielBasic.compileAndRun ejecutado');
+
+        // 1. Obtener la configuración de launch.json
+        const launchConfigs = vscode.workspace.getConfiguration('launch').get('configurations') || [];
+        const borielConfig = launchConfigs.find(c => c.type === 'borielbasic') || {};
+
+        // 2. Determinar el archivo fuente (sourceFile de launch.json) y ruta ZEsarUX
+        const sourceFile = borielConfig.sourceFile;
+        const zesaruxPath = borielConfig.zesaruxPath || 'zesarux';
+
+        try {
+            // 3. Compilar
+            const result = await compileBorielBasic({
+                sourceFile: sourceFile,
+                forceAutorun: true
+            });
+
+            // 4. Lanzar ZEsarUX de forma independiente (SOLO EJECUCIÓN, sin debug)
+            const program = result.outputFile;
+
+            if (!zesaruxPath) {
+                vscode.window.showErrorMessage('No se ha especificado la ruta de ZEsarUX. Configura "zesaruxPath" en tu launch.json.');
+                return;
+            }
+
+            if (!fs.existsSync(zesaruxPath) && zesaruxPath !== 'zesarux') {
+                vscode.window.showErrorMessage(`No se encuentra el ejecutable ZEsarUX en: ${zesaruxPath}`);
+                return;
+            }
+
+            const zesaruxCmd = `${zesaruxPath} --noconfigfile --machine 128k --nosplash --nowelcomemessage --quickexit --tape "${program}"`;
+
+            const terminal = vscode.window.createTerminal({
+                name: 'Boriel Run',
+                cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || undefined
+            });
+            terminal.sendText(zesaruxCmd);
+            terminal.show();
+            vscode.window.showInformationMessage(`Ejecutando juego en ZEsarUX: ${path.basename(program)}`);
+
+        } catch (err) {
+            console.error('[Extension] Error en compileAndRun:', err);
+        }
+    });
+
     // Registrar el comando "borielBasic.exportZXPToBoriel"
     const exportZXPCommand = vscode.commands.registerCommand('borielBasic.exportZXPToBoriel', (uri) => {
         exportZXPToBoriel(uri, context);
@@ -820,7 +875,7 @@ function activate(context) {
             vscode.window.showErrorMessage('No se ha especificado la ruta de ZEsarUX o el archivo .tap. Configura "zesaruxPath" en tu launch.json.');
             return;
         }
-        const zesaruxCmd = `${zesaruxPath} --enable-remoteprotocol --remoteprotocol-port=${debugPort} --noconfigfile --machine 128k --no-realvideo --tape ${program}`;
+        const zesaruxCmd = `${zesaruxPath} --enable-remoteprotocol --remoteprotocol-port=${debugPort} --noconfigfile --machine 128k --nosplash --nowelcomemessage --tape ${program}`;
         try {
             if (!fs.existsSync(zesaruxPath)) {
                 vscode.window.showErrorMessage(`No se encuentra el ejecutable ZEsarUX en: ${zesaruxPath}`);
@@ -857,6 +912,7 @@ function activate(context) {
     context.subscriptions.push(
         vscode.debug.registerDebugConfigurationProvider('borielbasic', debugConfigProvider),
         vscode.debug.registerDebugAdapterDescriptorFactory('borielbasic', debugAdapterFactory),
+        compileAndRunCommand,
         compileCommand,
         updateLSPCommand,
         updateZxpBinaryCommand,

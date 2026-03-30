@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.35",
+    "version": "1.0.36",
     "author": "Raül Torralba (Juntelart)",
     "license": "AGPL-3.0",
     "publisher": "rtorralba",
@@ -122,6 +122,11 @@
             }
         },
         "commands": [
+            {
+                "command": "borielBasic.compileAndRun",
+                "title": "Compilar y Ejecutar con ZEsarUX",
+                "category": "Boriel Basic"
+            },
             {
                 "command": "borielBasic.compile",
                 "title": "Compilar Boriel Basic",
