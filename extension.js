@@ -493,53 +493,7 @@ function activate(context) {
         }
     };
 
-    // Registrar hover provider antes de iniciar el LSP
-    const hoverProvider = vscode.languages.registerHoverProvider('borielbasic', {
-        async provideHover(document, position, token) {
-            // Obtener la palabra en la posición actual
-            const wordRange = document.getWordRangeAtPosition(position);
-            const word = wordRange ? document.getText(wordRange) : '';
-
-            // Intentar obtener información del LSP si está disponible
-            if (client && client.state === 2) { // 2 = Running
-                try {
-                    const params = {
-                        textDocument: {
-                            uri: document.uri.toString()
-                        },
-                        position: {
-                            line: position.line,
-                            character: position.character
-                        }
-                    };
-
-                    const result = await client.sendRequest('textDocument/hover', params);
-
-                    if (result && result.contents) {
-                        // Extraer el contenido del LSP
-                        let lspContent;
-                        if (typeof result.contents === 'string') {
-                            lspContent = result.contents;
-                        } else if (Array.isArray(result.contents)) {
-                            lspContent = result.contents.map(c => typeof c === 'string' ? c : c.value).join('\n\n');
-                        } else if (result.contents.value) {
-                            lspContent = result.contents.value;
-                        } else {
-                            lspContent = JSON.stringify(result.contents);
-                        }
-
-                        return new vscode.Hover(new vscode.MarkdownString(lspContent), result.range);
-                    }
-                } catch (error) {
-                    console.error('[Boriel Basic] Error al obtener hover del LSP:', error);
-                }
-            }
-
-            // Si el LSP no devolvió información, retornar null (no mostrar hover)
-            return null;
-        }
-    });
-    context.subscriptions.push(hoverProvider);
+    // Hover is provided by the LanguageClient; do not register a manual hover provider
 
     // Crear el cliente LSP
     client = new LanguageClient(
