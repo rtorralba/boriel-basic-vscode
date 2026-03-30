@@ -492,48 +492,56 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 this.sendEvent(new OutputEvent(`[Debug] ¿Existe ASM?: ${fs.existsSync(asmFile)}\n`));
             }
 
-            // Start ZEsarUX WITHOUT tape so we can set breakpoints first,
-            // then use smartload command to load and run the program.
-            const zesaruxArgs = [
-                '--noconfigfile',
-                '--enable-remoteprotocol',
-                '--remoteprotocol-port', String(debugPort),
-                '--machine', '128k',
-                '--no-realvideo',
-                '--verbose', '0'
-            ];
+            // Comprobar si ZEsarUX ya está corriendo en el puerto indicado
+            this.sendEvent(new OutputEvent(`Comprobando si ZEsarUX ya está iniciado en puerto ${debugPort}...\n`));
+            const isRunning = await this._isZesaruxRunning(debugPort);
 
-            this.sendEvent(new OutputEvent(`Comando: ${zesaruxPath} ${zesaruxArgs.join(' ')}\n`));
+            if (isRunning) {
+                this.sendEvent(new OutputEvent(`✓ ZEsarUX detectado en puerto ${debugPort}. Reutilizando instancia existente.\n`));
+                this._zesaruxProcess = null;
+            } else {
+                this.sendEvent(new OutputEvent(`Iniciando ZEsarUX...\n`));
 
-            this._zesaruxProcess = child_process.spawn(zesaruxPath, zesaruxArgs, {
-                stdio: ['ignore', 'pipe', 'pipe']
-            });
+                // Iniciar ZEsarUX con el protocolo de debug remoto
+                // Start ZEsarUX WITHOUT tape so we can set breakpoints first,
+                // then use smartload command to load and run the program.
+                const zesaruxArgs = [
+                    '--noconfigfile',
+                    '--enable-remoteprotocol',
+                    '--remoteprotocol-port', String(debugPort),
+                    '--machine', '128k',
+                    '--no-realvideo',
+                    '--verbose', '0'
+                ];
 
-            this._zesaruxProcess.stdout.on('data', (data) => {
-                this.sendEvent(new OutputEvent(`ZEsarUX: ${data.toString()}\n`));
-            });
+                this.sendEvent(new OutputEvent(`Comando (Detached): ${zesaruxPath} ${zesaruxArgs.join(' ')}\n`));
 
-            this._zesaruxProcess.stderr.on('data', (data) => {
-                this.sendEvent(new OutputEvent(`ZEsarUX Error: ${data.toString()}\n`, 'stderr'));
-            });
-
-            this._zesaruxProcess.on('error', (err) => {
-                this.sendEvent(new OutputEvent(`Error al iniciar ZEsarUX: ${err.message}\n`, 'stderr'));
-                this.sendErrorResponse(response, {
-                    id: 1002,
-                    format: `Error al iniciar ZEsarUX: ${err.message}`,
-                    showUser: true
+                // Spawn ZEsarUX in detached mode so it outlives the VS Code session if needed
+                this._zesaruxProcess = child_process.spawn(zesaruxPath, zesaruxArgs, {
+                    detached: true,
+                    stdio: 'ignore'
                 });
-            });
 
-            this._zesaruxProcess.on('close', (code) => {
-                this.sendEvent(new OutputEvent(`ZEsarUX cerrado con código ${code}\n`));
-                this.sendEvent(new TerminatedEvent());
-            });
+                this._zesaruxProcess.unref(); // Dejarlo independiente
 
-            // Esperar a que ZEsarUX inicie
-            this.sendEvent(new OutputEvent(`Esperando a que ZEsarUX inicie...\n`));
-            await this._waitForZesarux(3000);
+                this._zesaruxProcess.on('error', (err) => {
+                    this.sendEvent(new OutputEvent(`Error al iniciar ZEsarUX: ${err.message}\n`, 'stderr'));
+                    this.sendErrorResponse(response, {
+                        id: 1002,
+                        format: `Error al iniciar ZEsarUX: ${err.message}`,
+                        showUser: true
+                    });
+                });
+
+                this._zesaruxProcess.on('close', (code) => {
+                    this.sendEvent(new OutputEvent(`ZEsarUX cerrado con código ${code}\n`));
+                    this.sendEvent(new TerminatedEvent());
+                });
+
+                // Esperar a que ZEsarUX inicie
+                this.sendEvent(new OutputEvent(`Esperando a que ZEsarUX inicie...\n`));
+                await this._waitForZesarux(3000);
+            }
 
             // Conectar al protocolo de debug
             this.sendEvent(new OutputEvent(`Conectando al puerto ${debugPort}...\n`));
@@ -2614,17 +2622,40 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
     async disconnectRequest(response, args) {
         if (this._debugSocket) {
-            await this._sendCommand('quit');
+            // No enviar 'quit' para evitar que ZEsarUX se cierre
             this._debugSocket.destroy();
             this._debugSocket = null;
         }
 
         if (this._zesaruxProcess) {
-            this._zesaruxProcess.kill();
+            // unref() para que el proceso hijo sea independiente y no se mate al cerrar el adaptador
+            this._zesaruxProcess.unref();
             this._zesaruxProcess = null;
         }
 
         this.sendResponse(response);
+    }
+
+    /**
+     * Comprueba si ZEsarUX ya está corriendo intentando conectar al puerto ZRCP
+     */
+    _isZesaruxRunning(port) {
+        return new Promise((resolve) => {
+            const socket = new net.Socket();
+            socket.setTimeout(500);
+            socket.on('connect', () => {
+                socket.destroy();
+                resolve(true);
+            });
+            socket.on('error', () => {
+                resolve(false);
+            });
+            socket.on('timeout', () => {
+                socket.destroy();
+                resolve(false);
+            });
+            socket.connect(port, '127.0.0.1');
+        });
     }
 
     async setBreakPointsRequest(response, args) {
