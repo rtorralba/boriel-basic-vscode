@@ -224,7 +224,7 @@
     "dependencies": {
         "@vscode/debugadapter": "^1.68.0",
         "@vscode/debugprotocol": "^1.68.0",
-        "boriel-basic-lsp": "^1.0.84",
+        "boriel-basic-lsp": "latest",
         "ignore": "^7.0.3",
         "vscode-languageclient": "^8.1.0"
     }
