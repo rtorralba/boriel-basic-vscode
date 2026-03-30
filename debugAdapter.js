@@ -511,7 +511,9 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     '--remoteprotocol-port', String(debugPort),
                     '--machine', '128k',
                     '--no-realvideo',
-                    '--verbose', '0'
+                    '--verbose', '0',
+                    '--nosplash',
+                    '--nowelcomemessage'
                 ];
 
                 this.sendEvent(new OutputEvent(`Comando (Detached): ${zesaruxPath} ${zesaruxArgs.join(' ')}\n`));
@@ -999,7 +1001,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         const filenamePart = m[2];
                         const extractedSourceFile = filenamePart.replace(/__/g, '.').replace(/_/g, '/');
                         const absSourceFile = path.join(workspaceDir, extractedSourceFile);
-                        
+
                         const addr = this._fileAddrMap && this._fileAddrMap[absSourceFile] && this._fileAddrMap[absSourceFile][bas];
                         if (addr !== undefined) {
                             if (!this._linesAtPC[addr]) this._linesAtPC[addr] = [];
@@ -2930,8 +2932,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const currentFileNorm = path.normalize(this._lastSourceFile).toLowerCase();
                     const currentLine = parseInt(this._lastBasLine, 10);
 
-                    const currentIndex = mapEntry.virtualLines.findIndex(v => 
-                        path.normalize(v.file).toLowerCase() === currentFileNorm && 
+                    const currentIndex = mapEntry.virtualLines.findIndex(v =>
+                        path.normalize(v.file).toLowerCase() === currentFileNorm &&
                         v.line === currentLine
                     );
 
@@ -3066,8 +3068,8 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     const currentFileNorm = path.normalize(this._lastSourceFile).toLowerCase();
                     const currentLine = parseInt(this._lastBasLine, 10);
 
-                    const currentIndex = mapEntry.virtualLines.findIndex(v => 
-                        path.normalize(v.file).toLowerCase() === currentFileNorm && 
+                    const currentIndex = mapEntry.virtualLines.findIndex(v =>
+                        path.normalize(v.file).toLowerCase() === currentFileNorm &&
                         v.line === currentLine
                     );
 
