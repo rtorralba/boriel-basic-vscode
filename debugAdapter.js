@@ -337,6 +337,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
 
             // Guardar referencia al archivo fuente (por defecto basado en el TAP)
             this._sourceFile = program.replace(/\.tap$/i, '.bas');
+            if (!fs.existsSync(this._sourceFile)) {
+                let altSource = program.replace(/\.tap$/i, '.zxbas');
+                if (fs.existsSync(altSource)) this._sourceFile = altSource;
+            }
 
             this.sendEvent(new OutputEvent(`Configuración de debug:\n`));
             this.sendEvent(new OutputEvent(`  ZEsarUX: ${zesaruxPath}\n`));
@@ -355,6 +359,10 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         : path.join(workspaceDir, args.sourceFile);
                 } else {
                     mainBas = path.join(workspaceDir, baseName + '.bas');
+                    if (!fs.existsSync(mainBas)) {
+                        let altMainBas = path.join(workspaceDir, baseName + '.zxbas');
+                        if (fs.existsSync(altMainBas)) mainBas = altMainBas;
+                    }
                 }
                 // If we found the original main.bas, prefer it as the source file
                 try {
@@ -1228,7 +1236,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     if (entry.isDirectory()) {
                         // Recursión en subcarpetas
                         searchDir(fullPath);
-                    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.bas')) {
+                    } else if (entry.isFile() && (entry.name.toLowerCase().endsWith('.bas') || entry.name.toLowerCase().endsWith('.zxbas'))) {
                         basFiles.push(fullPath);
                     }
                 }
@@ -1258,9 +1266,11 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // try relative to workspace root
             candidates.push(path.join(workspaceDir, includeName));
             // also try with .bas extension if omitted
-            if (!includeName.toLowerCase().endsWith('.bas')) {
+            if (!includeName.toLowerCase().endsWith('.bas') && !includeName.toLowerCase().endsWith('.zxbas')) {
                 candidates.push(path.join(currentDir, includeName + '.bas'));
                 candidates.push(path.join(workspaceDir, includeName + '.bas'));
+                candidates.push(path.join(currentDir, includeName + '.zxbas'));
+                candidates.push(path.join(workspaceDir, includeName + '.zxbas'));
             }
             return candidates;
         };
@@ -1273,7 +1283,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 visited.add(normalized);
 
                 if (!fs.existsSync(normalized)) return;
-                if (!normalized.toLowerCase().endsWith('.bas')) return;
+                if (!normalized.toLowerCase().endsWith('.bas') && !normalized.toLowerCase().endsWith('.zxbas')) return;
 
                 collected.push(normalized);
 
@@ -1375,31 +1385,89 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             // Ejemplo: lib/functions.bas → lib_functions__bas
             const fileLabel = relativePath.replace(/[\\\/]/g, '_').replace(/\./g, '__');
 
+            // Track whether we are inside an ASM block
+            let inAsmBlock = false;
             // Track whether the previous logical line is still continuing (ends with _ )
             let inContinuation = false;
+
+            // Track array initialization blocks (DIM ... => { ... })
+            let inArrayInit = false;
+            let arrayBraceLevel = 0;
+            let hasSeenBrace = false;
+            let arrayInitLine = -1;
 
             sourceLines.forEach((line, index) => {
                 const originalLineNumber = index + 1;
                 const trimmedLine = line.trim();
 
+                const tokens = trimmedLine.split(/\s+/);
+                const firstToken = (tokens[0] || '').toUpperCase();
+                const secondToken = (tokens[1] || '').toUpperCase();
+                
+                if (firstToken === 'END' && secondToken === 'ASM') {
+                    inAsmBlock = false;
+                }
+
+                // Array initialization tracking
+                let isArrayInitStart = false;
+                if (!inArrayInit && trimmedLine.includes('=>')) {
+                    inArrayInit = true;
+                    arrayBraceLevel = 0;
+                    hasSeenBrace = false;
+                    arrayInitLine = index;
+                    isArrayInitStart = true;
+                }
+
+                if (inArrayInit) {
+                    const opens = (line.match(/{/g) || []).length;
+                    const closes = (line.match(/}/g) || []).length;
+                    if (opens > 0) hasSeenBrace = true;
+                    arrayBraceLevel += opens - closes;
+                }
+
                 // Detect line continuation: line ends with ' _' or just '_' (Boriel Basic)
+                // Allows for '}_' using \W (non-word character)
                 const isContinuation = inContinuation;
                 // Update continuation state for next line
-                inContinuation = /\s_\s*$/.test(trimmedLine) || trimmedLine === '_';
+                inContinuation = /(?:^|\W)_\s*$/.test(trimmedLine);
+                if (trimmedLine === '_') inContinuation = true;
 
-                const firstToken = (trimmedLine.split(/\s+/)[0] || '').toUpperCase();
                 const isPreprocessor = trimmedLine.startsWith('#');
-                const isComment = trimmedLine.startsWith("'") || trimmedLine.toUpperCase().startsWith('REM ');
+                const isComment = trimmedLine.startsWith("'") || trimmedLine.toUpperCase().startsWith('REM ') || trimmedLine.startsWith(';');
                 // DIM sin inicializador (sin =) es solo una declaración, no genera código
                 const isDimNoInit = firstToken === 'DIM' && !trimmedLine.includes('=');
+                const isAsmBoundary = firstToken === 'ASM' || (firstToken === 'END' && secondToken === 'ASM');
+                
+                // Si la línea está dentro de un bloque de array inicializado, ignoramos añadir etiquetas
+                const skipDueToArrayInit = inArrayInit && !isArrayInitStart;
+
                 // No insertar marcador en líneas de continuación (son parte de la sentencia anterior)
-                if (trimmedLine && !isComment && !isPreprocessor && !isDimNoInit && !isContinuation && !FLOW_TOKENS.has(firstToken)) {
+                if (trimmedLine && !isComment && !isPreprocessor && !isDimNoInit && !isContinuation && !FLOW_TOKENS.has(firstToken) && !isAsmBoundary && !skipDueToArrayInit) {
 
                     // Añadir marcador ANTES de la línea de código
                     // Formato: BAS___lineNumber___filename
-                    preprocessedLines.push(`ASM`);
-                    preprocessedLines.push(`BAS___${originalLineNumber}___${fileLabel}:`);
-                    preprocessedLines.push(`END ASM`);
+                    if (inAsmBlock) {
+                        // We are already inside an ASM block, label is valid Z80 syntax
+                        preprocessedLines.push(`BAS___${originalLineNumber}___${fileLabel}:`);
+                    } else {
+                        // Wraps the label in an ASM block so Boriel Basic compiles it as a Z80 label
+                        preprocessedLines.push(`ASM`);
+                        preprocessedLines.push(`BAS___${originalLineNumber}___${fileLabel}:`);
+                        preprocessedLines.push(`END ASM`);
+                    }
+                }
+
+                if (firstToken === 'ASM') {
+                    inAsmBlock = true;
+                }
+
+                if (inArrayInit) {
+                    if (hasSeenBrace && arrayBraceLevel <= 0) {
+                        inArrayInit = false; // Block ended
+                    } else if (!hasSeenBrace && !inContinuation) {
+                        // Single-line initialization without braces, and doesn't end with line continuation
+                        inArrayInit = false;
+                    }
                 }
 
                 // Añadir la línea original
@@ -3220,7 +3288,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                         // Prefer a file that matches the TAP basename (main.bas)
                         const tapBase = path.basename(this._program, '.tap').toLowerCase();
                         for (const f of files) {
-                            if (!f.toLowerCase().endsWith('.bas')) continue;
+                            if (!f.toLowerCase().endsWith('.bas') && !f.toLowerCase().endsWith('.zxbas')) continue;
                             const full = path.join(pdir, f);
                             if (f.toLowerCase() === `${tapBase}.bas`) { found = full; break; }
                             if (full.includes(path.sep + '.debug' + path.sep)) continue;

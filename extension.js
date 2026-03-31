@@ -552,7 +552,7 @@ function activate(context) {
             const docPath = document.uri && document.uri.fsPath;
             if (!docPath || !docPath.startsWith(workspacePath)) return;
             // Solo reindexar cuando el archivo guardado es un .bas
-            if (!docPath.endsWith('.bas')) return;
+            if (!docPath.endsWith('.bas') && !docPath.endsWith('.zxbas')) return;
             // Disparar reindex (no await para no bloquear el guardado)
             triggerReindexOnSave();
         } catch (e) {
