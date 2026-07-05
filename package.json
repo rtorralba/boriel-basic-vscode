@@ -204,21 +204,27 @@
                     {
                         "type": "borielbasic",
                         "request": "launch",
-                        "name": "Debug con ZEsarUX",
-                        "program": "${workspaceFolder}/dist/main.tap",
-                        "stopOnEntry": true
+                        "name": "Debug Boriel Basic (ZEsarUX)",
+                        "program": "${workspaceFolder}\\dist\\main.tap",
+                        "sourceFile": "src/main.bas",
+                        "zesaruxPath": "zesarux",
+                        "debugPort": 10000,
+                        "stopOnEntry": false
                     }
                 ],
                 "configurationSnippets": [
                     {
-                        "label": "Boriel Basic: Debug con ZEsarUX",
+                        "label": "Boriel Basic: Debug Boriel Basic (ZEsarUX)",
                         "description": "Nueva configuración para depurar con ZEsarUX.",
                         "body": {
                             "type": "borielbasic",
                             "request": "launch",
-                            "name": "Debug con ZEsarUX",
-                            "program": "^\"\\${workspaceFolder}/dist/main.tap\"",
-                            "stopOnEntry": true
+                            "name": "Debug Boriel Basic (ZEsarUX)",
+                            "program": "${workspaceFolder}\\dist\\main.tap",
+                            "sourceFile": "src/main.bas",
+                            "zesaruxPath": "zesarux",
+                            "debugPort": 10000,
+                            "stopOnEntry": false
                         }
                     }
                 ]
