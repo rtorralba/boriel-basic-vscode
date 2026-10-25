@@ -1,0 +1,45 @@
+Turbo80 v1.4 — el emulador de ZX Spectrum, para tu web
+=================================================================
+
+Esta carpeta es el emulador entero (13 máquinas, cintas, discos, ensamblador,
+depurador, ajustes…) listo para alojarlo en tu propia web, sin depender de
+turbo80.com. No lleva la Biblioteca de juegos ni la partida en red, que
+necesitan el servidor de turbo80.com.
+
+CÓMO SE USA
+
+1. Sube esta carpeta (turbo80/) a tu web, junto a tu página. Tiene que
+   servirse por HTTP, como cualquier web; no hace falta nada especial.
+
+2. En tu página, un div, el script y una llamada:
+
+     <div id="spectrum"></div>
+     <script src="turbo80/turbo80.js"></script>
+     <script>Turbo80(document.getElementById('spectrum'), { load: 'juego.tap' });</script>
+
+   O sin JavaScript:  <div data-turbo80="juego.tap" data-model="128k"></div>
+
+3. También puedes abrir turbo80/index.html tal cual: es el emulador completo.
+
+Las opciones, los métodos y los avisos están en la guía:
+  https://turbo80.com/embeber   (español)
+  https://turbo80.com/embed     (inglés)
+Y en las carpetas ejemplos/ y examples/ hay páginas mínimas, con el HTML que
+las produce, listas para copiar.
+
+Para ficheros de otros dominios que no permiten CORS, el cargador usa el
+relé de turbo80.com; relay: false lo desactiva.
+
+LICENCIAS
+
+Las ROMs del Spectrum (16K/48K/128K/+2/+2A/+3) van incluidas con permiso de
+Amstrad, que autoriza su uso con emuladores. Las ROMs de Timex son las de
+Sinclair con cambios de Timex, y esos cambios están en el dominio público.
+La del Interface 1 es © 1983 Sinclair Research Ltd y va sin modificar.
+La ROM de la interfaz de disco +D (de Miles Gordon Technology) va incluida
+con permiso de Datel, titular de sus derechos; su sistema, G+DOS, no se
+incluye.
+esxDOS 0.8.9 (la ROM y la tarjeta SD del DivMMC, © 2005-2021 Papaya Dezign y
+los colaboradores de su paquete, con sus créditos en el README.TXT de la
+tarjeta) va incluido con permiso de Papaya Dezign. No se incluyen la ROM
+TR-DOS ni las del Scorpion; el emulador las acepta como ficheros del usuario.

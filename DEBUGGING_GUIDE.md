@@ -1,20 +1,23 @@
-# Guía de Depuración con ZEsarUX
+# Guía de Depuración de Boriel Basic
 
-## Cómo funciona el debugger
+Esta extensión incluye un **debug adapter nativo de VS Code (DAP)** que permite depurar programas de Boriel Basic paso a paso, inspeccionar variables y registros, y establecer breakpoints directamente sobre el código `.bas`.
 
-La extensión incluye un **debug adapter nativo de VS Code** que controla ZEsarUX de forma completamente automática. No es necesario lanzar ZEsarUX manualmente ni conectarse por telnet.
+La depuración se puede realizar con dos emuladores:
+1. **Turbo80 (Recomendado)**: Emulador web ZX Spectrum totalmente integrado en una pestaña Webview dentro de VS Code. **No requiere instalar nada externo** ni configurar rutas de ejecutables o puertos.
+2. **ZEsarUX**: Emulador externo conectado mediante protocolo de depuración remota TCP (puerto 10000).
 
-Al iniciar una sesión de depuración, la extensión:
-1. Compila el `.bas` automáticamente (con `-O0` para preservar la correspondencia de líneas).
-2. Genera un ASM intermedio en la carpeta `.debug/` e invoca `zxbasm -d` para extraer las direcciones de los marcadores `BAS___N___filename`.
-3. Construye el mapa `línea Boriel → dirección de memoria`.
-4. Lanza ZEsarUX con el protocolo remoto habilitado.
-5. Se conecta por socket al puerto de debug y carga el programa con `smartload`.
-6. Pausa la ejecución en el punto de entrada (si `stopOnEntry: true`).
+---
 
-## Configuración (launch.json)
+## 1. Depuración con Turbo80 (Integrado en VS Code)
 
-Añade una configuración de tipo `borielbasic` en `.vscode/launch.json`:
+### Ventajas de Turbo80
+- **Cero configuración externa**: No necesitas instalar binarios ni configurar variables de entorno o PATH.
+- **Pestaña integrada (Webview)**: El emulador se ejecuta junto a tu editor con filtro CRT, audio y pantalla completa opcional.
+- **Rendimiento instantáneo**: Las variables se leen directamente desde un volcado de memoria RAM (snapshot) en microsegundos, sin latencias de sockets.
+- **Paso a paso Boriel Basic**: Step Over (F10), Step Into (F11) y Step Out (Shift+F11) avanzan el CPU Z80 hasta la siguiente instrucción mapeada del código `.bas`.
+- **Barra de estado**: Indicador en tiempo real con el estado de ejecución y dirección Z80 actual.
+
+### Configuración básica para Turbo80 (`launch.json`)
 
 ```json
 {
@@ -23,9 +26,46 @@ Añade una configuración de tipo `borielbasic` en `.vscode/launch.json`:
         {
             "type": "borielbasic",
             "request": "launch",
-            "name": "Debug con ZEsarUX",
+            "name": "Debug Boriel Basic (Turbo80)",
+            "emulator": "turbo80",
+            "sourceFile": "src/main.bas",
+            "stopOnEntry": true
+        }
+    ]
+}
+```
+
+### Comandos directos de Turbo80
+- **F5** (en archivo `.bas`): Iniciar depuración con Turbo80.
+- **Ctrl+F5** (Cmd+F5 en macOS): Compilar y ejecutar en Turbo80 (sin depurar).
+- Botón **Ejecutar en Turbo80** y **Depurar en Turbo80** en la barra superior del editor (`editor/title`).
+
+---
+
+## 2. Depuración con ZEsarUX (Emulador Externo)
+
+### Cómo funciona con ZEsarUX
+Al iniciar una sesión de depuración con ZEsarUX:
+1. Compila el `.bas` automáticamente (con `-O0` para preservar la correspondencia de líneas).
+2. Genera un ASM intermedio en la carpeta `.debug/` e invoca `zxbasm -d` para extraer las direcciones de los marcadores `BAS___N___filename`.
+3. Construye el mapa `línea Boriel → dirección de memoria`.
+4. Lanza ZEsarUX con el protocolo remoto habilitado.
+5. Se conecta por socket al puerto de debug y carga el programa con `smartload`.
+6. Pausa la ejecución en el punto de entrada (si `stopOnEntry: true`).
+
+### Configuración para ZEsarUX (`launch.json`)
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "borielbasic",
+            "request": "launch",
+            "name": "Debug Boriel Basic (ZEsarUX)",
+            "emulator": "zesarux",
             "program": "${workspaceFolder}/dist/main.tap",
-            "zesaruxPath": "/ruta/a/zesarux",
+            "zesaruxPath": "zesarux",
             "debugPort": 10000,
             "stopOnEntry": true,
             "sourceFile": "src/main.bas"
@@ -34,23 +74,17 @@ Añade una configuración de tipo `borielbasic` en `.vscode/launch.json`:
 }
 ```
 
-### Propiedades
+### Propiedades de `launch.json`
 
 | Propiedad | Tipo | Descripción | Por defecto |
 |-----------|------|-------------|-------------|
-| `program` | string | Ruta al `.tap` de salida | `${workspaceFolder}/dist/main.tap` |
-| `zesaruxPath` | string | Ruta al ejecutable de ZEsarUX | `zesarux` (en PATH) |
+| `emulator` | string | Emulador a usar: `"turbo80"` o `"zesarux"` | `"turbo80"` |
+| `turbo80Model` | string | Modelo de máquina para Turbo80 (`"48k"` o `"128k"`) | `"48k"` |
+| `sourceFile` | string | Archivo `.bas` principal (relativo al workspace o absoluto) | `borielBasic.mainFile` o `src/main.bas` |
+| `stopOnEntry` | boolean | Pausar al inicio del programa en la primera línea de código Boriel | `true` |
+| `program` | string | Ruta al `.tap` de salida (opcional para Turbo80 si compila) | `${workspaceFolder}/dist/main.tap` |
+| `zesaruxPath` | string | Ruta al ejecutable de ZEsarUX (solo si `emulator` es `"zesarux"`) | `zesarux` (en PATH) |
 | `debugPort` | integer | Puerto del protocolo remoto de ZEsarUX | `10000` |
-| `stopOnEntry` | boolean | Pausar al inicio del programa | `true` |
-| `sourceFile` | string | Archivo `.bas` principal (relativo al workspace o absoluto) | `borielBasic.mainFile` o `main.bas` |
-
-Si no se especifica `zesaruxPath`, se usa el valor de `borielBasic.zesaruxPath` en la configuración de VS Code.
-
-## Cómo iniciar el debugger
-
-1. Configura `zesaruxPath` apuntando a tu instalación de ZEsarUX.
-2. Presiona **F5** o usa el menú _Run → Start Debugging_.
-3. VS Code compilará el proyecto, lanzará ZEsarUX y pausará en la primera línea.
 
 ## Funcionalidades disponibles
 

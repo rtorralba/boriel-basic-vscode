@@ -4,6 +4,7 @@ const net = require('net');
 const child_process = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const turbo80Manager = require('./turbo80Manager');
 
 class BorielBasicDebugSession extends LoggingDebugSession {
     constructor() {
@@ -41,9 +42,128 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         this._lastBasLine = null; // última línea Boriel conocida para PC
         this._lastSourceFile = null; // archivo fuente donde paró el breakpoint
         this._sourceFile = null; // Archivo fuente .bas
+
+        // Turbo80 Webview Debugger state
+        this._isTurbo80 = false;
+        this._memoryBuffer = null;
+        this._turbo80PausedHandler = null;
+        this._turbo80ResumedHandler = null;
+
         this.setDebuggerLinesStartAt1(true);
         this.setDebuggerColumnsStartAt1(true);
         console.log('[BorielBasicDebug] Inicializado');
+    }
+
+    _getMappedAddresses() {
+        const list = [];
+        if (this._fileAddrMap) {
+            for (const lineMap of Object.values(this._fileAddrMap)) {
+                for (const addr of Object.values(lineMap)) {
+                    const n = parseInt(addr, 10);
+                    if (!isNaN(n) && !list.includes(n)) list.push(n);
+                }
+            }
+        }
+        if (this._basLineToAddress) {
+            for (const addr of Object.values(this._basLineToAddress)) {
+                const n = parseInt(addr, 10);
+                if (!isNaN(n) && !list.includes(n)) list.push(n);
+            }
+        }
+        if (this._reverseLineMap) {
+            for (const k of Object.keys(this._reverseLineMap)) {
+                const m = String(k).match(/^([0-9A-Fa-f]+)H?$/i);
+                if (m) {
+                    const n = parseInt(m[1], 16);
+                    if (!isNaN(n) && !list.includes(n)) list.push(n);
+                }
+            }
+        }
+        if (this._addrToBasLine) {
+            for (const k of Object.keys(this._addrToBasLine)) {
+                const n = parseInt(k, 10);
+                if (!isNaN(n) && !list.includes(n)) list.push(n);
+            }
+        }
+        if (this._addrToFileAndLine) {
+            for (const k of Object.keys(this._addrToFileAndLine)) {
+                const n = parseInt(k, 10);
+                if (!isNaN(n) && !list.includes(n)) list.push(n);
+            }
+        }
+        return list;
+    }
+
+    _getUserBreakpointAddresses() {
+        const bpAddresses = [];
+        if (this._userBreakpointsByFile) {
+            for (const [absFile, lines] of Object.entries(this._userBreakpointsByFile)) {
+                const normPath = path.normalize(absFile).toLowerCase();
+                for (const l of lines) {
+                    const lineNum = parseInt(l, 10);
+                    let addr = undefined;
+                    if (this._fileAddrMap) {
+                        for (const [k, v] of Object.entries(this._fileAddrMap)) {
+                            if (path.normalize(k).toLowerCase() === normPath && v[lineNum] !== undefined) {
+                                addr = v[lineNum];
+                                break;
+                            }
+                        }
+                    }
+                    if (addr === undefined && this._basLineToAddress && this._basLineToAddress[lineNum] !== undefined) {
+                        addr = this._basLineToAddress[lineNum];
+                    }
+                    if (addr !== undefined && !bpAddresses.includes(addr)) {
+                        bpAddresses.push(addr);
+                    }
+                }
+            }
+        }
+        return bpAddresses;
+    }
+
+    _calculateEntryAddress(lineMapFile) {
+        let entryAddr = null;
+        try {
+            if (lineMapFile && fs.existsSync(lineMapFile)) {
+                const lmRaw = fs.readFileSync(lineMapFile, 'utf8');
+                const lmObj = JSON.parse(lmRaw);
+                const lmKeys = Object.keys(lmObj || {});
+                if (lmKeys && lmKeys.length > 0) {
+                    const candidate = lmKeys[0];
+                    const m = String(candidate).match(/^([0-9A-Fa-f]+)H?$/i);
+                    if (m) {
+                        const addrNum = parseInt(m[1], 16);
+                        if (!isNaN(addrNum)) entryAddr = addrNum;
+                    }
+                }
+            }
+        } catch (e) {}
+
+        if (!entryAddr) {
+            let entryBasLine = null;
+            try {
+                if (this._sourceFile && this._userBreakpointsByFile && this._userBreakpointsByFile[this._sourceFile]) {
+                    const s = Array.from(this._userBreakpointsByFile[this._sourceFile]).map(n => parseInt(n, 10)).filter(n => !isNaN(n)).sort((a, b) => a - b);
+                    if (s.length > 0) entryBasLine = s[0];
+                }
+            } catch (e) {}
+
+            if (entryBasLine && this._basLineToAddress && this._basLineToAddress[entryBasLine]) {
+                entryAddr = this._basLineToAddress[entryBasLine];
+            } else {
+                const mainSrc = this._sourceFile;
+                if (this._fileAddrMap && mainSrc && this._fileAddrMap[mainSrc] && this._fileAddrMap[mainSrc][1]) {
+                    entryAddr = this._fileAddrMap[mainSrc][1];
+                } else if (this._basLineToAddress && this._basLineToAddress[1]) {
+                    entryAddr = this._basLineToAddress[1];
+                } else if (this._asmLineToAddress && Object.keys(this._asmLineToAddress).length > 0) {
+                    const addrs = Object.values(this._asmLineToAddress).map(n => parseInt(n, 10));
+                    entryAddr = Math.min(...addrs);
+                }
+            }
+        }
+        return entryAddr || 0x8000;
     }
 
     /**
@@ -236,9 +356,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     async launchRequest(response, args) {
         console.error('[BorielBasic Debug] launchRequest llamado con args:', JSON.stringify(args, null, 2));
         try {
-            // Intentar diferentes rutas de ZEsarUX
+            const emulator = (args.emulator || '').toLowerCase();
+            const isTurbo80 = emulator === 'turbo80' || (!emulator && (!args.zesaruxPath || args.zesaruxPath === 'zesarux'));
+            this._isTurbo80 = isTurbo80;
+
+            // Intentar diferentes rutas de ZEsarUX si no es Turbo80
             let zesaruxPath = args.zesaruxPath;
-            if (!zesaruxPath) {
+            if (!this._isTurbo80 && !zesaruxPath) {
                 console.error('[BorielBasic Debug] No se especificó zesaruxPath, buscando...');
                 const possiblePaths = [
                     process.env.HOME + '/bin/zesarux/zesarux',
@@ -261,15 +385,34 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
 
             const debugPort = args.debugPort || 10000;
-            const program = args.program;
-            this._program = program;
             const stopOnEntry = args.stopOnEntry !== false;
 
-            console.error('[BorielBasic Debug] Configuración final:', { zesaruxPath, debugPort, program, stopOnEntry });
+            // Determinar workspaceDir y program de forma robusta y segura
+            let program = args.program;
+            let workspaceDir = args.workspaceFolder || process.cwd();
+
+            if (program && typeof program === 'string') {
+                const programDir = path.dirname(program);
+                const parentDir = path.dirname(programDir);
+                // Si program está en dist/, workspaceDir es el padre de dist/
+                if (path.basename(programDir).toLowerCase() === 'dist') {
+                    workspaceDir = parentDir;
+                } else {
+                    workspaceDir = programDir;
+                }
+            } else if (args.sourceFile && typeof args.sourceFile === 'string') {
+                const srcDir = path.dirname(args.sourceFile);
+                workspaceDir = path.basename(srcDir).toLowerCase() === 'src' ? path.dirname(srcDir) : srcDir;
+                const base = path.basename(args.sourceFile, path.extname(args.sourceFile));
+                program = path.join(workspaceDir, 'dist', `${base}.tap`);
+            } else {
+                program = path.join(workspaceDir, 'dist', 'main.tap');
+            }
+            this._program = program;
+
+            console.error('[BorielBasic Debug] Configuración final:', { isTurbo80, zesaruxPath, debugPort, program, stopOnEntry, workspaceDir });
 
             // Preparar carpeta .debug para archivos intermedios
-            const programDir = path.dirname(program);
-            const workspaceDir = path.dirname(programDir);
             const debugDir = path.join(workspaceDir, '.debug');
             // Borrar completamente la carpeta .debug si existe (incluye subcarpetas)
             try {
@@ -288,7 +431,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             } catch (e) {
                 this.sendEvent(new OutputEvent(`[Debug] No se pudo crear .debug: ${e.message}\n`, 'stderr'));
             }
-            const baseName = path.basename(program, '.tap');
+            const baseName = path.basename(program, path.extname(program));
 
             // Cargar el mapeo de líneas si existe (ahora en .debug/)
             const lineMapFile = path.join(debugDir, baseName + '.linemap.json');
@@ -352,17 +495,27 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             try {
                 // Resolver mainBas: usar args.sourceFile si se proporcionó, si no buscar
                 // en la raíz del workspace con el baseName del TAP
-                let mainBas;
-                if (args.sourceFile) {
+                let mainBas = null;
+                if (args.sourceFile && typeof args.sourceFile === 'string') {
                     mainBas = path.isAbsolute(args.sourceFile)
                         ? args.sourceFile
                         : path.join(workspaceDir, args.sourceFile);
-                } else {
-                    mainBas = path.join(workspaceDir, baseName + '.bas');
-                    if (!fs.existsSync(mainBas)) {
-                        let altMainBas = path.join(workspaceDir, baseName + '.zxbas');
-                        if (fs.existsSync(altMainBas)) mainBas = altMainBas;
+                }
+                if (!mainBas || !fs.existsSync(mainBas)) {
+                    const candidates = [
+                        path.join(workspaceDir, baseName + '.bas'),
+                        path.join(workspaceDir, baseName + '.zxbas'),
+                        path.join(workspaceDir, 'src', baseName + '.bas'),
+                        path.join(workspaceDir, 'src', 'main.bas'),
+                        path.join(workspaceDir, 'test', 'src', 'main.bas'),
+                        path.join(workspaceDir, 'test', 'main.bas')
+                    ];
+                    for (const c of candidates) {
+                        if (fs.existsSync(c)) { mainBas = c; break; }
                     }
+                }
+                if (!mainBas) {
+                    mainBas = path.join(workspaceDir, baseName + '.bas');
                 }
                 // If we found the original main.bas, prefer it as the source file
                 try {
@@ -475,6 +628,103 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                     format: `No se encuentra el archivo: ${program}`,
                     showUser: true
                 });
+                return;
+            }
+
+            // Si el emulador seleccionado es Turbo80, lanzamos el emulador web integrado
+            if (this._isTurbo80) {
+                this.sendEvent(new OutputEvent(`=== Iniciando depuración en Turbo80 (Emulador Web) ===\n`));
+
+                let asmFile = null;
+                if (program && program.endsWith('.tap')) {
+                    asmFile = path.join(debugDir, baseName + '.asm');
+                    this._asmFile = asmFile;
+                }
+
+                if (this._asmFile && fs.existsSync(this._asmFile)) {
+                    await this._buildAsmAddressMap(this._asmFile);
+                    await this._buildBasLineAddressMap(this._asmFile);
+                }
+
+                const entryAddr = this._calculateEntryAddress(lineMapFile);
+                this._entryAddr = entryAddr;
+                this.sendEvent(new OutputEvent(`[Debug] Dirección de entrada Boriel: 0x${entryAddr.toString(16).toUpperCase()}\n`));
+
+                const mappedAddresses = this._getMappedAddresses();
+                const bpAddresses = this._getUserBreakpointAddresses();
+
+                const tapBuffer = fs.readFileSync(program);
+                const tapBase64 = tapBuffer.toString('base64');
+
+                // Listener para eventos de pausa de Turbo80
+                this._turbo80PausedHandler = (msg) => {
+                    this._lastPC = msg.pc;
+                    if (msg.registers) this._lastRegisters = msg.registers;
+                    if (msg.ramBase64) {
+                        try { this._memoryBuffer = Buffer.from(msg.ramBase64, 'base64'); } catch (e) {}
+                    }
+                    const fl = this._pcToFileAndLine(msg.pc);
+                    if (fl) {
+                        this._lastBasLine = fl.line;
+                        this._lastSourceFile = fl.file;
+                    } else if (msg.pc != null && msg.pc < 0x4000) {
+                        this._stopped = true;
+                        this.sendEvent(new OutputEvent(`[Debug] Programa finalizado (retorno a ROM Spectrum en 0x${msg.pc.toString(16).toUpperCase()})\n`));
+                        this.sendEvent(new TerminatedEvent());
+                        return;
+                    }
+                    this._stopped = true;
+                    this.sendEvent(new StoppedEvent(msg.reason || 'breakpoint', 1));
+                };
+                turbo80Manager.on('cpuPaused', this._turbo80PausedHandler);
+
+                this._turbo80ProgramEndedHandler = (msg) => {
+                    this._stopped = true;
+                    this.sendEvent(new OutputEvent(`[Debug] Programa Boriel Basic finalizado con éxito.\n`));
+                    this.sendEvent(new TerminatedEvent());
+                };
+                turbo80Manager.on('programEnded', this._turbo80ProgramEndedHandler);
+
+                this._turbo80ResumedHandler = () => {
+                    this._stopped = false;
+                };
+                turbo80Manager.on('cpuResumed', this._turbo80ResumedHandler);
+
+                // Abrir panel Turbo80 con el TAP cargado
+                turbo80Manager.createOrShowPanel({
+                    base64: tapBase64,
+                    filename: path.basename(program),
+                    model: args.turbo80Model || '128k',
+                    crt: args.turbo80Crt !== undefined ? args.turbo80Crt : true,
+                    debug: true,
+                    breakpoints: bpAddresses,
+                    entryAddr: entryAddr,
+                    stopOnEntry: stopOnEntry,
+                    mappedAddresses: mappedAddresses
+                });
+
+                if (stopOnEntry) {
+                    this.sendEvent(new OutputEvent(`Pausando en entrada...\n`));
+                    await new Promise((resolve) => {
+                        let resolved = false;
+                        const onFirstPause = (msg) => {
+                            if (resolved) return;
+                            resolved = true;
+                            resolve();
+                        };
+                        turbo80Manager.once('cpuPaused', onFirstPause);
+                        setTimeout(() => {
+                            if (!resolved) {
+                                resolved = true;
+                                resolve();
+                            }
+                        }, 10000);
+                    });
+                } else {
+                    this.sendEvent(new OutputEvent(`stopOnEntry=false: ejecutando hasta breakpoint de usuario...\n`));
+                }
+
+                this.sendResponse(response);
                 return;
             }
 
@@ -1962,6 +2212,21 @@ class BorielBasicDebugSession extends LoggingDebugSession {
         }
     }
 
+    async _readMemory(addrNum, length = 1) {
+        if (this._isTurbo80) {
+            if (this._memoryBuffer && addrNum >= 0x4000) {
+                const offset = addrNum - 0x4000;
+                const bytes = [];
+                for (let i = 0; i < length && (offset + i) < this._memoryBuffer.length; i++) {
+                    bytes.push(this._memoryBuffer[offset + i]);
+                }
+                return bytes;
+            }
+            return new Array(length).fill(0);
+        }
+        return this._readMemoryZesarux(addrNum, length);
+    }
+
     // Dump a compact diagnostics summary about line maps to the debug output
     async _dumpLineMapDiagnostics(sampleAsmLine) {
         try {
@@ -2691,6 +2956,24 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async disconnectRequest(response, args) {
+        if (this._isTurbo80) {
+            turbo80Manager.stop();
+            if (this._turbo80PausedHandler) {
+                turbo80Manager.removeListener('cpuPaused', this._turbo80PausedHandler);
+                this._turbo80PausedHandler = null;
+            }
+            if (this._turbo80ProgramEndedHandler) {
+                turbo80Manager.removeListener('programEnded', this._turbo80ProgramEndedHandler);
+                this._turbo80ProgramEndedHandler = null;
+            }
+            if (this._turbo80ResumedHandler) {
+                turbo80Manager.removeListener('cpuResumed', this._turbo80ResumedHandler);
+                this._turbo80ResumedHandler = null;
+            }
+            this.sendResponse(response);
+            return;
+        }
+
         if (this._debugSocket) {
             // No enviar 'quit' para evitar que ZEsarUX se cierre
             this._debugSocket.destroy();
@@ -2743,6 +3026,28 @@ class BorielBasicDebugSession extends LoggingDebugSession {
             }
         } catch (e) { }
 
+        if (this._isTurbo80) {
+            if (this._fileAddrMap && sourcePath && this._fileAddrMap[sourcePath]) {
+                for (const clientLine of clientLines) {
+                    const addr = this._fileAddrMap[sourcePath][clientLine];
+                    if (addr !== undefined) {
+                        breakpoints.push({ verified: true, line: clientLine });
+                    } else {
+                        breakpoints.push({ verified: false, line: clientLine, message: 'Línea sin código ejecutable' });
+                    }
+                }
+            } else {
+                for (const clientLine of clientLines) {
+                    breakpoints.push({ verified: true, line: clientLine });
+                }
+            }
+            const bpAddrs = this._getUserBreakpointAddresses();
+            turbo80Manager.setBreakpoints(bpAddrs);
+            response.body = { breakpoints };
+            this.sendResponse(response);
+            return;
+        }
+
         const haveConnection = this._debugSocket && !this._debugSocket.destroyed;
 
         // Si ya tenemos el mapa por archivo, instalamos directamente con la dirección exacta
@@ -2784,6 +3089,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async continueRequest(response, args) {
+        if (this._isTurbo80) {
+            this._stopped = false;
+            this.sendResponse(response);
+            turbo80Manager.continue();
+            return;
+        }
+
         this._stopped = false;
         this.sendResponse(response);
         try {
@@ -2834,6 +3146,12 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async pauseRequest(response, args) {
+        if (this._isTurbo80) {
+            turbo80Manager.pause();
+            this.sendResponse(response);
+            return;
+        }
+
         await this._sendCommand('enter-cpu-step');
         this._stopped = true;
         this.sendResponse(response);
@@ -2887,6 +3205,39 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async nextRequest(response, args) {
+        if (this._isTurbo80) {
+            if (this._lastPC && this._lastBasLine && this._lastSourceFile && this._reverseLineMap) {
+                const currentPC = parseInt(this._lastPC, 10);
+                const currentAddrHex = `${currentPC.toString(16).toUpperCase()}H`;
+                const mapEntry = this._reverseLineMap[currentAddrHex];
+
+                if (mapEntry && mapEntry.virtualLines && mapEntry.virtualLines.length > 1) {
+                    const currentFileNorm = path.normalize(this._lastSourceFile).toLowerCase();
+                    const currentLine = parseInt(this._lastBasLine, 10);
+
+                    const currentIndex = mapEntry.virtualLines.findIndex(v =>
+                        path.normalize(v.file).toLowerCase() === currentFileNorm &&
+                        v.line === currentLine
+                    );
+
+                    if (currentIndex !== -1 && currentIndex + 1 < mapEntry.virtualLines.length) {
+                        const nextVirtual = mapEntry.virtualLines[currentIndex + 1];
+                        this._lastBasLine = nextVirtual.line;
+                        this._lastSourceFile = nextVirtual.file;
+                        this._stopped = true;
+                        this.sendResponse(response);
+                        this.sendEvent(new StoppedEvent('step', 1));
+                        return;
+                    }
+                }
+            }
+
+            this.sendResponse(response);
+            const mapped = this._getMappedAddresses();
+            turbo80Manager.stepOver(mapped);
+            return;
+        }
+
         this.sendEvent(new OutputEvent(`[Debug][nextRequest] ===== STEP OVER REQUEST INITIATED =====\n`));
         // Step Over: ir a la siguiente línea Boriel
         try {
@@ -3115,6 +3466,39 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async stepInRequest(response, args) {
+        if (this._isTurbo80) {
+            if (this._lastPC && this._lastBasLine && this._lastSourceFile && this._reverseLineMap) {
+                const currentPC = parseInt(this._lastPC, 10);
+                const currentAddrHex = `${currentPC.toString(16).toUpperCase()}H`;
+                const mapEntry = this._reverseLineMap[currentAddrHex];
+
+                if (mapEntry && mapEntry.virtualLines && mapEntry.virtualLines.length > 1) {
+                    const currentFileNorm = path.normalize(this._lastSourceFile).toLowerCase();
+                    const currentLine = parseInt(this._lastBasLine, 10);
+
+                    const currentIndex = mapEntry.virtualLines.findIndex(v =>
+                        path.normalize(v.file).toLowerCase() === currentFileNorm &&
+                        v.line === currentLine
+                    );
+
+                    if (currentIndex !== -1 && currentIndex + 1 < mapEntry.virtualLines.length) {
+                        const nextVirtual = mapEntry.virtualLines[currentIndex + 1];
+                        this._lastBasLine = nextVirtual.line;
+                        this._lastSourceFile = nextVirtual.file;
+                        this._stopped = true;
+                        this.sendResponse(response);
+                        this.sendEvent(new StoppedEvent('step', 1));
+                        return;
+                    }
+                }
+            }
+
+            this.sendResponse(response);
+            const mapped = this._getMappedAddresses();
+            turbo80Manager.stepInto(mapped);
+            return;
+        }
+
         // Step Into: perform CPU single-instruction steps until we reach an address
         // that maps to a Boriel source line (this._addrToBasLine).
         try {
@@ -3225,6 +3609,13 @@ class BorielBasicDebugSession extends LoggingDebugSession {
     }
 
     async stepOutRequest(response, args) {
+        if (this._isTurbo80) {
+            this.sendResponse(response);
+            const mapped = this._getMappedAddresses();
+            turbo80Manager.stepOut(mapped);
+            return;
+        }
+
         await this._sendCommand('cpu-step-over');
         this.sendResponse(response);
         this.sendEvent(new StoppedEvent('step', 1));
@@ -3371,7 +3762,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                 if (g.dataAddr !== null && g.dataAddr !== undefined && g.arrayTotalElements > 0 && g.arrayElementSize) {
                     const dataAddrNum = typeof g.dataAddr === 'number' ? g.dataAddr : parseInt(g.dataAddr, 10);
                     const totalBytes = g.arrayTotalElements * g.arrayElementSize;
-                    const bytes = await this._readMemoryZesarux(dataAddrNum, Math.min(totalBytes, 4096));
+                    const bytes = await this._readMemory(dataAddrNum, Math.min(totalBytes, 4096));
                     if (bytes && bytes.length > 0) {
                         for (let i = 0; i < g.arrayTotalElements; i++) {
                             const offset = i * g.arrayElementSize;
@@ -3442,19 +3833,19 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                 if (g.type === 'string_ptr') {
                                     // ZX Basic String variable: 2-byte LE pointer at addrNum
                                     // → points to: [2 bytes LE length][N bytes chars]
-                                    const ptrBytes = await this._readMemoryZesarux(addrNum, 2);
+                                    const ptrBytes = await this._readMemory(addrNum, 2);
                                     if (ptrBytes && ptrBytes.length === 2) {
                                         const ptr = ptrBytes[0] + (ptrBytes[1] << 8);
                                         if (ptr === 0) {
                                             display = `""`;
                                         } else {
-                                            const lenBytes = await this._readMemoryZesarux(ptr, 2);
+                                            const lenBytes = await this._readMemory(ptr, 2);
                                             if (lenBytes && lenBytes.length === 2) {
                                                 const len = lenBytes[0] + (lenBytes[1] << 8);
                                                 if (len === 0) {
                                                     display = `""`;
                                                 } else if (len > 0 && len <= 1024) {
-                                                    const strBytes = await this._readMemoryZesarux(ptr + 2, len);
+                                                    const strBytes = await this._readMemory(ptr + 2, len);
                                                     if (strBytes) {
                                                         const str = strBytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
                                                         display = `"${str}"`;
@@ -3473,7 +3864,7 @@ class BorielBasicDebugSession extends LoggingDebugSession {
                                     }
                                 } else {
                                     // Attempt to read memory from emulator
-                                    const bytes = await this._readMemoryZesarux(addrNum, Math.max(1, Math.min(g.size || 1, 256)));
+                                    const bytes = await this._readMemory(addrNum, Math.max(1, Math.min(g.size || 1, 256)));
                                     if (bytes && bytes.length > 0) {
                                         if (g.type === 'byte' || (g.size === 1)) {
                                             display = `${bytes[0]} (0x${bytes[0].toString(16).toUpperCase()})`;

@@ -8,8 +8,106 @@ const child_process = require('child_process');
 const fs = require('fs');
 const net = require('net');
 const https = require('https');
+const turbo80Manager = require('./turbo80Manager');
 
 let client;
+
+const debugLineDecoration = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    backgroundColor: 'rgba(255, 215, 0, 0.22)',
+    overviewRulerColor: 'rgba(255, 215, 0, 0.85)',
+    overviewRulerLane: vscode.OverviewRulerLane.Full
+});
+
+function clearDebugDecorations() {
+    vscode.window.visibleTextEditors.forEach(editor => {
+        editor.setDecorations(debugLineDecoration, []);
+    });
+}
+
+function highlightDebugPosition(sourceFile, lineNumber) {
+    clearDebugDecorations();
+    if (!sourceFile || !lineNumber || lineNumber < 1) return;
+
+    const fileUri = vscode.Uri.file(sourceFile);
+    const line0 = lineNumber - 1;
+
+    vscode.workspace.openTextDocument(fileUri).then(doc => {
+        if (line0 >= doc.lineCount) return;
+        const lineText = doc.lineAt(line0).text;
+        const lineRange = new vscode.Range(line0, 0, line0, lineText.length);
+
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.fsPath.toLowerCase() === sourceFile.toLowerCase());
+        if (editor) {
+            editor.setDecorations(debugLineDecoration, [lineRange]);
+            editor.revealRange(lineRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        } else {
+            vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preserveFocus: true }).then(ed => {
+                ed.setDecorations(debugLineDecoration, [lineRange]);
+                ed.revealRange(lineRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+            }, () => {});
+        }
+    }).catch(() => {});
+}
+
+function getBorielLaunchConfig(targetEmulator, folder) {
+    const workspaceFolder = folder || (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]);
+    const launchConfigs = vscode.workspace.getConfiguration('launch', workspaceFolder?.uri).get('configurations') || [];
+    if (targetEmulator) {
+        const match = launchConfigs.find(c => c.type === 'borielbasic' && c.emulator === targetEmulator);
+        if (match) return match;
+    }
+    return launchConfigs.find(c => c.type === 'borielbasic') || {};
+}
+
+function getProjectRootSourceFile(folder, targetEmulator) {
+    const workspaceFolder = folder || (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]);
+    const rootDir = workspaceFolder ? workspaceFolder.uri.fsPath : process.cwd();
+
+    // 1. Prioridad: leer 'sourceFile' de launch.json
+    const borielConfig = getBorielLaunchConfig(targetEmulator, workspaceFolder);
+    if (borielConfig && borielConfig.sourceFile) {
+        const p = path.isAbsolute(borielConfig.sourceFile)
+            ? borielConfig.sourceFile
+            : path.join(rootDir, borielConfig.sourceFile);
+        if (fs.existsSync(p)) return p;
+    }
+
+    // 2. Revisar configuración 'borielBasic.mainFile' en settings.json
+    const mainFileSetting = vscode.workspace.getConfiguration('borielBasic', workspaceFolder?.uri).get('mainFile');
+    if (mainFileSetting && typeof mainFileSetting === 'string') {
+        const p = path.isAbsolute(mainFileSetting)
+            ? mainFileSetting
+            : path.join(rootDir, mainFileSetting);
+        if (fs.existsSync(p)) return p;
+    }
+
+    // 3. Buscar candidatos habituales de archivo raíz del proyecto
+    const candidates = [
+        path.join(rootDir, 'src', 'main.bas'),
+        path.join(rootDir, 'main.bas'),
+        path.join(rootDir, 'test', 'src', 'main.bas'),
+        path.join(rootDir, 'test', 'main.bas'),
+        path.join(rootDir, 'src', 'main.zxbas'),
+        path.join(rootDir, 'main.zxbas')
+    ];
+    for (const c of candidates) {
+        if (fs.existsSync(c)) return c;
+    }
+
+    // 4. Último recurso: usar el archivo activo del editor si es .bas / .zxbas
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document) {
+        const docPath = editor.document.fileName;
+        const ext = path.extname(docPath).toLowerCase();
+        const lang = editor.document.languageId;
+        if (ext === '.bas' || ext === '.zxbas' || lang === 'borielbasic' || lang === 'boriel-basic') {
+            return docPath;
+        }
+    }
+
+    return null;
+}
 
 function compileBorielBasic(options = {}) {
     return new Promise((resolve, reject) => {
@@ -47,42 +145,22 @@ function compileBorielBasic(options = {}) {
             console.error('[Compilación] No se pudo limpiar .debug:', e);
         }
 
-        // Determinar el archivo fuente a usar
-        const editor = vscode.window.activeTextEditor;
+        // Determinar el archivo fuente a usar priorizando launch.json / root del proyecto
         let sourceFilePath = null;
 
-        if (options.sourceFile) {
+        if (options.sourceFile && typeof options.sourceFile === 'string') {
             sourceFilePath = path.isAbsolute(options.sourceFile) ? options.sourceFile : path.join(workspaceFolder, options.sourceFile);
             if (!fs.existsSync(sourceFilePath)) {
                 sourceFilePath = null;
             }
         }
 
-        if (!sourceFilePath && mainFile) {
-            sourceFilePath = path.isAbsolute(mainFile) ? mainFile : path.join(workspaceFolder, mainFile);
-            if (!fs.existsSync(sourceFilePath)) {
-                sourceFilePath = null;
-            }
-        }
-
-        if (!sourceFilePath && editor && editor.document && editor.document.uri) {
-            sourceFilePath = editor.document.uri.fsPath;
+        if (!sourceFilePath) {
+            sourceFilePath = getProjectRootSourceFile(vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]);
         }
 
         if (!sourceFilePath) {
-            const workspaceMain = path.join(workspaceFolder, 'main.bas');
-            if (fs.existsSync(workspaceMain)) {
-                sourceFilePath = workspaceMain;
-            } else {
-                const testMain = path.join(workspaceFolder, 'test', 'main.bas');
-                if (fs.existsSync(testMain)) {
-                    sourceFilePath = testMain;
-                }
-            }
-        }
-
-        if (!sourceFilePath) {
-            const msg = 'No se pudo determinar el archivo fuente a compilar. Configura "borielBasic.mainFile" o abre el archivo a compilar.';
+            const msg = 'No se pudo determinar el archivo fuente a compilar. Define "sourceFile" en tu launch.json o configura "borielBasic.mainFile".';
             vscode.window.showErrorMessage(msg);
             reject(new Error(msg));
             return;
@@ -101,13 +179,17 @@ function compileBorielBasic(options = {}) {
             bin = path.join(__dirname, 'bin', 'zxbasic-macos', 'zxbc');
         }
 
-        // Crear carpeta de salida dist/
-        const distFolder = path.join(workspaceFolder, 'dist');
+        // Crear carpeta de salida dist/ (junto a src/ si el fuente está en src/)
+        let distFolder = path.join(workspaceFolder, 'dist');
+        const sourceDir = path.dirname(sourceFilePath);
+        if (path.basename(sourceDir).toLowerCase() === 'src') {
+            distFolder = path.join(path.dirname(sourceDir), 'dist');
+        }
         if (!fs.existsSync(distFolder)) {
             fs.mkdirSync(distFolder, { recursive: true });
         }
 
-        const baseName = path.basename(sourceFilePath, '.bas');
+        const baseName = path.basename(sourceFilePath, path.extname(sourceFilePath));
         const effectiveOutputFormat = options.forceTap || outputFormat === 'tap' ? 'tap' : 'bin';
         const effectiveIncludeBasicLoader = includeBasicLoader || options.forceTap;
         const effectiveAutorun = options.forceAutorun === true ? true : (options.noAutorun === true ? false : autorun);
@@ -785,12 +867,61 @@ function activate(context) {
 
 
 
+    // Inicializar Turbo80 Manager
+    turbo80Manager.init(context);
+
+    // Barra de estado para depuración Turbo80
+    const debugStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    context.subscriptions.push(debugStatusBarItem);
+
+    turbo80Manager.on('cpuPaused', (msg) => {
+        vscode.commands.executeCommand('setContext', 'borielBasic.isDebugging', true);
+        vscode.commands.executeCommand('setContext', 'borielBasic.isPaused', true);
+        const pcHex = msg?.pc ? msg.pc.toString(16).toUpperCase().padStart(4, '0') : '????';
+        debugStatusBarItem.text = `$(debug-pause) Boriel: PC=$${pcHex}`;
+        debugStatusBarItem.tooltip = `Boriel Basic pausado en Z80 PC=$${pcHex}. Clic para continuar.`;
+        debugStatusBarItem.command = 'borielBasic.debugContinue';
+        debugStatusBarItem.show();
+    });
+
+    turbo80Manager.on('cpuResumed', () => {
+        clearDebugDecorations();
+        vscode.commands.executeCommand('setContext', 'borielBasic.isPaused', false);
+        debugStatusBarItem.text = '$(play) Boriel: Ejecutando...';
+        debugStatusBarItem.tooltip = 'Boriel Basic en ejecución en Turbo80';
+        debugStatusBarItem.show();
+    });
+
+    turbo80Manager.on('closed', () => {
+        clearDebugDecorations();
+        debugStatusBarItem.hide();
+        vscode.commands.executeCommand('setContext', 'borielBasic.isDebugging', false);
+        vscode.commands.executeCommand('setContext', 'borielBasic.isPaused', false);
+    });
+
+    turbo80Manager.on('debugStopped', () => {
+        clearDebugDecorations();
+        debugStatusBarItem.hide();
+        vscode.commands.executeCommand('setContext', 'borielBasic.isDebugging', false);
+        vscode.commands.executeCommand('setContext', 'borielBasic.isPaused', false);
+    });
+
+    turbo80Manager.on('programEnded', () => {
+        clearDebugDecorations();
+        vscode.commands.executeCommand('setContext', 'borielBasic.isDebugging', false);
+        vscode.commands.executeCommand('setContext', 'borielBasic.isPaused', false);
+        debugStatusBarItem.text = '$(check) Boriel: Finalizado';
+        debugStatusBarItem.tooltip = 'Programa Boriel Basic finalizado con éxito';
+        debugStatusBarItem.show();
+        setTimeout(() => {
+            debugStatusBarItem.hide();
+        }, 4000);
+    });
+
     // Registrar el comando "borielBasic.compile"
     console.log('[Extension] Registrando comando borielBasic.compile');
     const compileCommand = vscode.commands.registerCommand('borielBasic.compile', () => {
         console.log('[Extension] Comando borielBasic.compile ejecutado (forzando autorun)');
-        // Cuando el usuario ejecuta el comando manual de compilación desde la extensión
-        // preferimos generar un .tap listo para ejecutar en un emulador (con autorun).
         compileBorielBasic({ forceAutorun: true });
     });
 
@@ -799,11 +930,134 @@ function activate(context) {
         updateLSP(context);
     });
 
-    // (Removed Python package management commands)
-
     // Registrar comando para forzar actualización del binario zxp2boriel
     const updateZxpBinaryCommand = vscode.commands.registerCommand('borielBasic.updateZXP2Boriel', () => {
         updateZXP2BorielBinary(context);
+    });
+
+    // Registrar el comando "borielBasic.runTurbo80"
+    const runTurbo80Command = vscode.commands.registerCommand('borielBasic.runTurbo80', async () => {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+            const rootDir = workspaceFolder ? workspaceFolder.uri.fsPath : process.cwd();
+            const borielConfig = getBorielLaunchConfig('turbo80', workspaceFolder);
+
+            const sourceFile = getProjectRootSourceFile(workspaceFolder, 'turbo80');
+
+            const result = await compileBorielBasic({
+                sourceFile: sourceFile,
+                forceAutorun: true
+            });
+            const program = result.outputFile;
+            if (!program || !fs.existsSync(program)) {
+                vscode.window.showErrorMessage(`No se encontró el archivo compilado: ${program}`);
+                return;
+            }
+            const tapBuffer = fs.readFileSync(program);
+            const targetModel = borielConfig.turbo80Model || vscode.workspace.getConfiguration('borielBasic', workspaceFolder?.uri).get('turbo80Model', '128k');
+            turbo80Manager.createOrShowPanel({
+                base64: tapBuffer.toString('base64'),
+                filename: path.basename(program),
+                model: targetModel,
+                crt: borielConfig.turbo80Crt !== undefined ? borielConfig.turbo80Crt : true,
+                debug: false
+            });
+            vscode.window.showInformationMessage(`Ejecutando en Turbo80: ${path.basename(program)} (${targetModel.toUpperCase()})`);
+        } catch (err) {
+            vscode.window.showErrorMessage(`Error al ejecutar en Turbo80: ${err.message || err}`);
+        }
+    });
+
+    // Registrar el comando "borielBasic.debugTurbo80"
+    const debugTurbo80Command = vscode.commands.registerCommand('borielBasic.debugTurbo80', async () => {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+            const rootDir = workspaceFolder ? workspaceFolder.uri.fsPath : process.cwd();
+            const borielConfig = getBorielLaunchConfig('turbo80', workspaceFolder);
+
+            const sourceFile = getProjectRootSourceFile(workspaceFolder, 'turbo80');
+
+            // Determinar programa (.tap) de launch.json o del sourceFile
+            let program = borielConfig.program;
+            if (program) {
+                program = program.replace(/\$\{workspaceFolder\}/g, rootDir);
+                program = path.isAbsolute(program) ? program : path.join(rootDir, program);
+            } else if (sourceFile) {
+                const base = path.basename(sourceFile, path.extname(sourceFile));
+                const sDir = path.dirname(sourceFile);
+                if (path.basename(sDir).toLowerCase() === 'src') {
+                    program = path.join(path.dirname(sDir), 'dist', `${base}.tap`);
+                } else {
+                    program = path.join(rootDir, 'dist', `${base}.tap`);
+                }
+            } else {
+                program = path.join(rootDir, 'dist', 'main.tap');
+            }
+
+            const targetModel = borielConfig.turbo80Model || vscode.workspace.getConfiguration('borielBasic', workspaceFolder?.uri).get('turbo80Model', '128k');
+            await vscode.debug.startDebugging(workspaceFolder, {
+                name: borielConfig.name || 'Debug Boriel Basic (Turbo80)',
+                type: 'borielbasic',
+                request: 'launch',
+                emulator: 'turbo80',
+                sourceFile: sourceFile,
+                program: program,
+                stopOnEntry: borielConfig.stopOnEntry !== undefined ? borielConfig.stopOnEntry : true,
+                turbo80Model: targetModel,
+                turbo80Crt: borielConfig.turbo80Crt !== undefined ? borielConfig.turbo80Crt : true
+            });
+        } catch (err) {
+            vscode.window.showErrorMessage(`Error al depurar en Turbo80: ${err.message || err}`);
+        }
+    });
+
+    // Registrar comandos de control de depuración Turbo80
+    const debugContinueCommand = vscode.commands.registerCommand('borielBasic.debugContinue', () => {
+        if (vscode.debug.activeDebugSession) {
+            vscode.commands.executeCommand('workbench.action.debug.continue');
+        } else {
+            turbo80Manager.continue();
+        }
+    });
+
+    const debugPauseCommand = vscode.commands.registerCommand('borielBasic.debugPause', () => {
+        if (vscode.debug.activeDebugSession) {
+            vscode.commands.executeCommand('workbench.action.debug.pause');
+        } else {
+            turbo80Manager.pause();
+        }
+    });
+
+    const debugStepOverCommand = vscode.commands.registerCommand('borielBasic.debugStepOver', () => {
+        if (vscode.debug.activeDebugSession) {
+            vscode.commands.executeCommand('workbench.action.debug.stepOver');
+        } else {
+            turbo80Manager.stepOver();
+        }
+    });
+
+    const debugStepIntoCommand = vscode.commands.registerCommand('borielBasic.debugStepInto', () => {
+        if (vscode.debug.activeDebugSession) {
+            vscode.commands.executeCommand('workbench.action.debug.stepInto');
+        } else {
+            turbo80Manager.stepInto();
+        }
+    });
+
+    const debugStepOutCommand = vscode.commands.registerCommand('borielBasic.debugStepOut', () => {
+        if (vscode.debug.activeDebugSession) {
+            vscode.commands.executeCommand('workbench.action.debug.stepOut');
+        } else {
+            turbo80Manager.stepOut();
+        }
+    });
+
+    const debugStopCommand = vscode.commands.registerCommand('borielBasic.debugStop', () => {
+        if (vscode.debug.activeDebugSession) {
+            vscode.commands.executeCommand('workbench.action.debug.stop');
+        } else {
+            turbo80Manager.stop();
+        }
     });
 
     // Registrar el comando "borielBasic.compileAndRun"
@@ -812,11 +1066,43 @@ function activate(context) {
         console.log('[Extension] Comando borielBasic.compileAndRun ejecutado');
 
         // 1. Obtener la configuración de launch.json
-        const launchConfigs = vscode.workspace.getConfiguration('launch').get('configurations') || [];
-        const borielConfig = launchConfigs.find(c => c.type === 'borielbasic') || {};
+        const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+        const defaultEmulator = vscode.workspace.getConfiguration('borielBasic').get('defaultEmulator', 'turbo80');
+        const borielConfig = getBorielLaunchConfig(null, workspaceFolder);
+        const targetEmulator = borielConfig.emulator || defaultEmulator;
 
-        // 2. Determinar el archivo fuente (sourceFile de launch.json) y ruta ZEsarUX
-        const sourceFile = borielConfig.sourceFile;
+        // 2. Determinar el archivo fuente priorizando launch.json
+        const sourceFile = getProjectRootSourceFile(workspaceFolder, targetEmulator);
+
+        if (targetEmulator === 'turbo80') {
+            try {
+                const result = await compileBorielBasic({
+                    sourceFile: sourceFile,
+                    forceAutorun: true
+                });
+                const program = result.outputFile;
+                if (!program || !fs.existsSync(program)) {
+                    vscode.window.showErrorMessage(`No se encontró el archivo compilado: ${program}`);
+                    return;
+                }
+                const targetModel = borielConfig.turbo80Model || vscode.workspace.getConfiguration('borielBasic', workspaceFolder?.uri).get('turbo80Model', '128k');
+                turbo80Manager.createOrShowPanel({
+                    base64: tapBuffer.toString('base64'),
+                    filename: path.basename(program),
+                    model: targetModel,
+                    crt: borielConfig.turbo80Crt !== undefined ? borielConfig.turbo80Crt : true,
+                    debug: false
+                });
+                vscode.window.showInformationMessage(`Ejecutando juego en Turbo80: ${path.basename(program)} (${targetModel.toUpperCase()})`);
+                return;
+            } catch (err) {
+                console.error('[Extension] Error en compileAndRun (Turbo80):', err);
+                vscode.window.showErrorMessage(`Error al compilar y ejecutar en Turbo80: ${err.message || err}`);
+                return;
+            }
+        }
+
+        // Si no es turbo80, usar ZEsarUX
         const zesaruxPath = borielConfig.zesaruxPath || 'zesarux';
 
         try {
@@ -861,8 +1147,6 @@ function activate(context) {
 
     // Registrar comando para lanzar ZEsarUX
     const launchZesaruxCommand = vscode.commands.registerCommand('borielBasic.launchZesarux', (config) => {
-        // Leer zesaruxPath desde los argumentos del comando (que vienen del launch.json)
-        // Si no se pasa directamente, buscar la config borielbasic activa en launch.json
         let zesaruxPath = config?.zesaruxPath;
         if (!zesaruxPath) {
             const launchConfigs = vscode.workspace.getConfiguration('launch').get('configurations') || [];
@@ -894,18 +1178,82 @@ function activate(context) {
         }
     });
 
-    // Registrar DebugConfigurationProvider para inyectar sourceFile automáticamente
+    // Registrar DebugConfigurationProvider para inyectar sourceFile, program y emulator automáticamente
     const debugConfigProvider = {
         resolveDebugConfiguration(folder, debugConfig) {
-            if (debugConfig.type === 'borielbasic' && !debugConfig.sourceFile) {
-                const mainFile = vscode.workspace.getConfiguration('borielBasic').get('mainFile');
-                if (mainFile) {
-                    debugConfig.sourceFile = mainFile;
+            if (!debugConfig) debugConfig = {};
+            if (!debugConfig.type) debugConfig.type = 'borielbasic';
+            if (!debugConfig.request) debugConfig.request = 'launch';
+
+            if (debugConfig.type === 'borielbasic') {
+                const workspacePath = folder ? folder.uri.fsPath : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd());
+
+                if (!debugConfig.emulator) {
+                    const borielConfig = getBorielLaunchConfig(null, folder);
+                    debugConfig.emulator = borielConfig.emulator || vscode.workspace.getConfiguration('borielBasic').get('defaultEmulator', 'turbo80');
+                }
+
+                if (!debugConfig.sourceFile) {
+                    debugConfig.sourceFile = getProjectRootSourceFile(folder, debugConfig.emulator);
+                }
+
+                if (debugConfig.sourceFile && !path.isAbsolute(debugConfig.sourceFile)) {
+                    const candidate = path.join(workspacePath, debugConfig.sourceFile);
+                    if (fs.existsSync(candidate)) {
+                        debugConfig.sourceFile = candidate;
+                    }
+                }
+
+                if (!debugConfig.turbo80Model) {
+                    const borielConfig = getBorielLaunchConfig(debugConfig.emulator, folder);
+                    debugConfig.turbo80Model = borielConfig.turbo80Model || vscode.workspace.getConfiguration('borielBasic', folder?.uri).get('turbo80Model', '128k');
+                }
+
+                if (!debugConfig.program) {
+                    const borielConfig = getBorielLaunchConfig(debugConfig.emulator, folder);
+                    if (borielConfig.program) {
+                        debugConfig.program = borielConfig.program.replace(/\$\{workspaceFolder\}/g, workspacePath);
+                    } else {
+                        let baseName = 'main';
+                        if (debugConfig.sourceFile && typeof debugConfig.sourceFile === 'string') {
+                            baseName = path.basename(debugConfig.sourceFile, path.extname(debugConfig.sourceFile));
+                            const srcDir = path.dirname(debugConfig.sourceFile);
+                            if (path.basename(srcDir).toLowerCase() === 'src') {
+                                debugConfig.program = path.join(path.dirname(srcDir), 'dist', `${baseName}.tap`);
+                            } else {
+                                debugConfig.program = path.join(workspacePath, 'dist', `${baseName}.tap`);
+                            }
+                        } else {
+                            debugConfig.program = path.join(workspacePath, 'dist', 'main.tap');
+                        }
+                    }
                 }
             }
             return debugConfig;
         }
     };
+
+    // Registrar comando para seleccionar interactivamente el modelo de ZX Spectrum para Turbo80
+    const selectTurbo80ModelCommand = vscode.commands.registerCommand('borielBasic.selectTurbo80Model', async () => {
+        const models = [
+            { label: 'ZX Spectrum 128K', description: '128k', detail: 'Modo 128K con chip de sonido AY-3-8912 y 128KB RAM (Por defecto)' },
+            { label: 'ZX Spectrum 48K', description: '48k', detail: 'Modelo clásico Sinclair 48K' },
+            { label: 'ZX Spectrum +2', description: 'plus2', detail: 'Modelo gris con reproductor de cassette' },
+            { label: 'ZX Spectrum +2A', description: 'plus2a', detail: 'Modelo negro Amstrad +2A' },
+            { label: 'ZX Spectrum +3', description: 'plus3', detail: 'Modelo con unidad de disco de 3 pulgadas' },
+            { label: 'ZX Spectrum 16K', description: '16k', detail: 'Modelo Sinclair con 16KB de RAM' }
+        ];
+
+        const currentModel = vscode.workspace.getConfiguration('borielBasic').get('turbo80Model', '128k');
+        const selected = await vscode.window.showQuickPick(models, {
+            placeHolder: `Selecciona el modelo de ZX Spectrum para Turbo80 (actual: ${currentModel.toUpperCase()})`
+        });
+
+        if (selected) {
+            await vscode.workspace.getConfiguration('borielBasic').update('turbo80Model', selected.description, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(`Modelo de ZX Spectrum para Turbo80 establecido a: ${selected.label}`);
+        }
+    });
 
     // Registrar el DebugAdapterDescriptorFactory para 'borielbasic'
     const debugAdapterFactory = new InlineDebugAdapterFactory();
@@ -917,7 +1265,16 @@ function activate(context) {
         updateLSPCommand,
         updateZxpBinaryCommand,
         exportZXPCommand,
-        launchZesaruxCommand
+        launchZesaruxCommand,
+        runTurbo80Command,
+        debugTurbo80Command,
+        debugContinueCommand,
+        debugPauseCommand,
+        debugStepOverCommand,
+        debugStepIntoCommand,
+        debugStepOutCommand,
+        debugStopCommand,
+        selectTurbo80ModelCommand
     );
     console.log('[Extension] DebugAdapterDescriptorFactory registrado para borielbasic');
     console.log('[Extension] activate FIN');

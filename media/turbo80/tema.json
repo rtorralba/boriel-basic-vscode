@@ -1,0 +1,11 @@
+{
+  "base": "#121418",
+  "accent": "#009dff",
+  "elevWindow": 6,
+  "elevMenu": 12,
+  "elevButton": 12,
+  "elevTitlebar": -20,
+  "elevEdge": 15,
+  "btnGrad": 12,
+  "btnHover": 23
+}

@@ -1,8 +1,41 @@
-# Depuración de Boriel Basic con ZEsarUX
+# Depuración de Boriel Basic
 
-Esta extensión incluye soporte completo para depurar programas de Boriel Basic utilizando el emulador ZEsarUX y su protocolo de depuración remota, totalmente integrado en VS Code.
+Esta extensión incluye soporte completo para depurar programas de Boriel Basic paso a paso, con breakpoints en archivos `.bas`, inspección de variables y registros del Z80.
 
-## Requisitos previos
+Soporta dos emuladores:
+1. **Turbo80 (Integrado, recomendado)**: Emulador web en pestaña Webview de VS Code. No requiere instalar ningún ejecutable ni configurar rutas.
+2. **ZEsarUX (Externo)**: Emulador externo mediante protocolo de depuración remota TCP.
+
+## 1. Depuración con Turbo80 (Webview integrada)
+
+No necesitas instalar ningún emulador externo. Simplemente abre tu archivo `.bas` y:
+- Pulsa **F5** para iniciar la depuración.
+- O pulsa **Ctrl+F5** (Cmd+F5 en macOS) para ejecutar sin depurar.
+- O pulsa los botones de reproducción/depuración en la esquina superior derecha del editor.
+
+### Configuración en `.vscode/launch.json`:
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "borielbasic",
+            "request": "launch",
+            "name": "Debug Boriel Basic (Turbo80)",
+            "emulator": "turbo80",
+            "sourceFile": "src/main.bas",
+            "stopOnEntry": true
+        }
+    ]
+}
+```
+
+---
+
+## 2. Depuración con ZEsarUX (Emulador externo)
+
+### Requisitos previos para ZEsarUX
 
 1. **ZEsarUX instalado**: Necesitas tener ZEsarUX instalado en tu sistema.
    - Linux: `sudo apt install zesarux` o descárgalo desde [ZEsarUX GitHub](https://github.com/chernandezba/zesarux)
@@ -13,16 +46,7 @@ Esta extensión incluye soporte completo para depurar programas de Boriel Basic 
    "zesaruxPath": "/ruta/a/zesarux"
    ```
 
-## Configuración
-
-### Crear configuración de debug
-
-1. Abre tu proyecto de Boriel Basic en VS Code (donde tienes tus archivos .bas)
-2. Ve a la vista de depuración (Ctrl+Shift+D o Cmd+Shift+D)
-3. Haz clic en "create a launch.json file"
-4. Selecciona "Boriel Basic Debug"
-
-O crea manualmente un archivo `.vscode/launch.json` **en tu proyecto** (no en la carpeta de la extensión):
+### Configuración en `.vscode/launch.json`:
 
 ```json
 {
@@ -31,33 +55,17 @@ O crea manualmente un archivo `.vscode/launch.json` **en tu proyecto** (no en la
         {
             "type": "borielbasic",
             "request": "launch",
-            "name": "Debug con ZEsarUX",
+            "name": "Debug Boriel Basic (ZEsarUX)",
+            "emulator": "zesarux",
             "program": "${workspaceFolder}/dist/main.tap",
+            "sourceFile": "src/main.bas",
             "stopOnEntry": true
         }
     ]
 }
 ```
 
-**Si ZEsarUX no está en tu PATH**, especifica la ruta completa:
-
-```json
-{
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "borielbasic",
-            "request": "launch",
-            "name": "Debug con ZEsarUX",
-            "program": "${workspaceFolder}/dist/main.tap",
-            "zesaruxPath": "/home/TU_USUARIO/bin/zesarux/zesarux",
-            "stopOnEntry": true
-        }
-    ]
-}
-```
-
-### Parámetros de configuración
+### Parámetros de configuración general
 
 - `program`: Ruta al archivo TAP/TZX a depurar (por defecto: `${workspaceFolder}/dist/main.tap`)
 - `zesaruxPath`: Ruta al ejecutable de ZEsarUX (por defecto: `zesarux`)

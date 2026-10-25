@@ -3,7 +3,7 @@
     "name": "boriel-basic",
     "displayName": "Boriel Basic",
     "description": "Programming language support for Boriel Basic, a BASIC compiler for the ZX Spectrum.",
-    "version": "1.0.38",
+    "version": "1.0.39",
     "author": "Raül Torralba (Juntelart)",
     "license": "AGPL-3.0",
     "publisher": "rtorralba",
@@ -24,7 +24,9 @@
         "onLanguage:borielbasic",
         "onDebugResolve:borielbasic",
         "onDebugInitialConfigurations",
-        "onCommand:borielBasic.updateZXP2Boriel"
+        "onCommand:borielBasic.updateZXP2Boriel",
+        "onCommand:borielBasic.runTurbo80",
+        "onCommand:borielBasic.debugTurbo80"
     ],
     "main": "./extension.js",
     "contributes": {
@@ -109,6 +111,41 @@
                     "default": false,
                     "description": "Si está activado, las palabras clave se formatearán"
                 },
+                "borielBasic.defaultEmulator": {
+                    "type": "string",
+                    "default": "turbo80",
+                    "enum": [
+                        "turbo80",
+                        "zesarux"
+                    ],
+                    "description": "Emulador por defecto para ejecutar y depurar programas Boriel Basic (turbo80 o zesarux)."
+                },
+                "borielBasic.turbo80Model": {
+                    "type": "string",
+                    "default": "128k",
+                    "enum": [
+                        "128k",
+                        "48k",
+                        "plus2",
+                        "plus2a",
+                        "plus3",
+                        "16k"
+                    ],
+                    "enumDescriptions": [
+                        "ZX Spectrum 128K (Sonido AY-3-8912, 128KB RAM - Por defecto)",
+                        "ZX Spectrum 48K (Estándar original Sinclair, 48KB RAM)",
+                        "ZX Spectrum +2 (Modelo gris con cassette)",
+                        "ZX Spectrum +2A (Modelo negro Amstrad)",
+                        "ZX Spectrum +3 (Modelo con disquetera)",
+                        "ZX Spectrum 16K (Modelo básico de 16KB)"
+                    ],
+                    "description": "Modelo de máquina ZX Spectrum para Turbo80 (por defecto 128k)."
+                },
+                "borielBasic.turbo80Crt": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Activar simulación CRT (scanlines y fósforo) en el emulador Turbo80."
+                },
                 "borielBasic.zesaruxPath": {
                     "type": "string",
                     "default": "zesarux",
@@ -124,13 +161,61 @@
         "commands": [
             {
                 "command": "borielBasic.compileAndRun",
-                "title": "Compilar y Ejecutar con ZEsarUX",
+                "title": "Compilar y Ejecutar",
                 "category": "Boriel Basic"
+            },
+            {
+                "command": "borielBasic.runTurbo80",
+                "title": "Ejecutar en Turbo80 (Webview)",
+                "category": "Boriel Basic",
+                "icon": "$(play)"
+            },
+            {
+                "command": "borielBasic.debugTurbo80",
+                "title": "Depurar en Turbo80 (Webview)",
+                "category": "Boriel Basic",
+                "icon": "$(debug-alt)"
             },
             {
                 "command": "borielBasic.compile",
                 "title": "Compilar Boriel Basic",
                 "category": "Boriel Basic"
+            },
+            {
+                "command": "borielBasic.debugContinue",
+                "title": "Depuración: Continuar",
+                "category": "Boriel Basic",
+                "icon": "$(debug-continue)"
+            },
+            {
+                "command": "borielBasic.debugPause",
+                "title": "Depuración: Pausar",
+                "category": "Boriel Basic",
+                "icon": "$(debug-pause)"
+            },
+            {
+                "command": "borielBasic.debugStepOver",
+                "title": "Depuración: Paso por encima",
+                "category": "Boriel Basic",
+                "icon": "$(debug-step-over)"
+            },
+            {
+                "command": "borielBasic.debugStepInto",
+                "title": "Depuración: Paso a paso",
+                "category": "Boriel Basic",
+                "icon": "$(debug-step-into)"
+            },
+            {
+                "command": "borielBasic.debugStepOut",
+                "title": "Depuración: Paso hacia afuera",
+                "category": "Boriel Basic",
+                "icon": "$(debug-step-out)"
+            },
+            {
+                "command": "borielBasic.debugStop",
+                "title": "Depuración: Detener",
+                "category": "Boriel Basic",
+                "icon": "$(debug-stop)"
             },
             {
                 "command": "borielBasic.updateLSP",
@@ -146,9 +231,26 @@
                 "command": "borielBasic.updateZXP2Boriel",
                 "title": "Actualizar zxp2boriel (binario)",
                 "category": "Boriel Basic"
+            },
+            {
+                "command": "borielBasic.selectTurbo80Model",
+                "title": "Seleccionar Modelo de ZX Spectrum (Turbo80)",
+                "category": "Boriel Basic"
             }
         ],
         "menus": {
+            "editor/title": [
+                {
+                    "command": "borielBasic.runTurbo80",
+                    "when": "editorLangId == borielbasic",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "borielBasic.debugTurbo80",
+                    "when": "editorLangId == borielbasic",
+                    "group": "navigation@2"
+                }
+            ],
             "explorer/context": [
                 {
                     "when": "resourceExtname == .zxp",
@@ -157,6 +259,56 @@
                 }
             ]
         },
+        "keybindings": [
+            {
+                "command": "borielBasic.runTurbo80",
+                "key": "ctrl+f5",
+                "mac": "cmd+f5",
+                "when": "editorTextFocus && (editorLangId == borielbasic)"
+            },
+            {
+                "command": "borielBasic.debugTurbo80",
+                "key": "f5",
+                "mac": "f5",
+                "when": "editorTextFocus && (editorLangId == borielbasic) && !borielBasic.isDebugging"
+            },
+            {
+                "command": "borielBasic.debugContinue",
+                "key": "f5",
+                "mac": "f5",
+                "when": "borielBasic.isDebugging"
+            },
+            {
+                "command": "borielBasic.debugPause",
+                "key": "f6",
+                "mac": "f6",
+                "when": "borielBasic.isDebugging"
+            },
+            {
+                "command": "borielBasic.debugStepOver",
+                "key": "f10",
+                "mac": "f10",
+                "when": "borielBasic.isDebugging"
+            },
+            {
+                "command": "borielBasic.debugStepInto",
+                "key": "f11",
+                "mac": "f11",
+                "when": "borielBasic.isDebugging"
+            },
+            {
+                "command": "borielBasic.debugStepOut",
+                "key": "shift+f11",
+                "mac": "shift+f11",
+                "when": "borielBasic.isDebugging"
+            },
+            {
+                "command": "borielBasic.debugStop",
+                "key": "shift+f5",
+                "mac": "shift+f5",
+                "when": "borielBasic.isDebugging"
+            }
+        ],
         "breakpoints": [
             {
                 "language": "borielbasic"
@@ -168,33 +320,52 @@
                 "label": "Boriel Basic Debug",
                 "configurationAttributes": {
                     "launch": {
-                        "required": [
-                            "program"
-                        ],
                         "properties": {
+                            "emulator": {
+                                "type": "string",
+                                "enum": [
+                                    "turbo80",
+                                    "zesarux"
+                                ],
+                                "default": "turbo80",
+                                "description": "Emulador a utilizar: turbo80 (integrado en webview) o zesarux (externo)."
+                            },
+                            "turbo80Model": {
+                                "type": "string",
+                                "enum": [
+                                    "128k",
+                                    "48k",
+                                    "plus2",
+                                    "plus2a",
+                                    "plus3",
+                                    "16k"
+                                ],
+                                "default": "128k",
+                                "description": "Modelo de máquina ZX Spectrum para Turbo80 (128k, 48k, plus2, plus2a, plus3, 16k). Por defecto 128k."
+                            },
                             "program": {
                                 "type": "string",
-                                "description": "Archivo TAP/TZX a cargar en ZEsarUX.",
+                                "description": "Archivo TAP/TZX a cargar en el emulador (opcional para Turbo80 si se compila automáticamente).",
                                 "default": "${workspaceFolder}/dist/main.tap"
                             },
                             "zesaruxPath": {
                                 "type": "string",
-                                "description": "Ruta al ejecutable de ZEsarUX.",
+                                "description": "Ruta al ejecutable de ZEsarUX (solo si emulator es zesarux).",
                                 "default": "zesarux"
                             },
                             "debugPort": {
                                 "type": "integer",
-                                "description": "Puerto para el protocolo de depuración remota.",
+                                "description": "Puerto para el protocolo de depuración remota de ZEsarUX.",
                                 "default": 10000
                             },
                             "stopOnEntry": {
                                 "type": "boolean",
-                                "description": "Detener automáticamente al iniciar el programa.",
+                                "description": "Detener automáticamente al iniciar el programa en la primera línea de código.",
                                 "default": true
                             },
                             "sourceFile": {
                                 "type": "string",
-                                "description": "Ruta al archivo .bas principal (relativa al workspaceFolder o absoluta). Si no se especifica se usa borielBasic.mainFile o main.bas en la raíz.",
+                                "description": "Ruta al archivo .bas principal (relativa al workspaceFolder o absoluta). Si no se especifica se usa borielBasic.mainFile o el archivo activo.",
                                 "default": "src/main.bas"
                             }
                         }
@@ -204,7 +375,17 @@
                     {
                         "type": "borielbasic",
                         "request": "launch",
+                        "name": "Debug Boriel Basic (Turbo80)",
+                        "emulator": "turbo80",
+                        "turbo80Model": "128k",
+                        "sourceFile": "src/main.bas",
+                        "stopOnEntry": true
+                    },
+                    {
+                        "type": "borielbasic",
+                        "request": "launch",
                         "name": "Debug Boriel Basic (ZEsarUX)",
+                        "emulator": "zesarux",
                         "program": "${workspaceFolder}\\dist\\main.tap",
                         "sourceFile": "src/main.bas",
                         "zesaruxPath": "zesarux",
@@ -214,12 +395,26 @@
                 ],
                 "configurationSnippets": [
                     {
+                        "label": "Boriel Basic: Debug Boriel Basic (Turbo80)",
+                        "description": "Depurar programa Boriel Basic usando el emulador integrado Turbo80 en webview.",
+                        "body": {
+                            "type": "borielbasic",
+                            "request": "launch",
+                            "name": "Debug Boriel Basic (Turbo80)",
+                            "emulator": "turbo80",
+                            "turbo80Model": "128k",
+                            "sourceFile": "src/main.bas",
+                            "stopOnEntry": true
+                        }
+                    },
+                    {
                         "label": "Boriel Basic: Debug Boriel Basic (ZEsarUX)",
-                        "description": "Nueva configuración para depurar con ZEsarUX.",
+                        "description": "Depurar programa Boriel Basic usando el emulador externo ZEsarUX.",
                         "body": {
                             "type": "borielbasic",
                             "request": "launch",
                             "name": "Debug Boriel Basic (ZEsarUX)",
+                            "emulator": "zesarux",
                             "program": "${workspaceFolder}\\dist\\main.tap",
                             "sourceFile": "src/main.bas",
                             "zesaruxPath": "zesarux",
