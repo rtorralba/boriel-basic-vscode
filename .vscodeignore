@@ -1,16 +1,43 @@
-# Ignore Python virtual environments
+# Documentación interna y de IA
+AGENTS.md
+DEBUG.md
+DEBUGGING_GUIDE.md
+
+# Archivos y carpetas de pruebas
+test/
+test/**
+test.asm
+test-regex.js
+main.bin
+
+# Scripts de desarrollo interno
+scripts/
+scripts/**
+Makefile
+
+# Salidas de compilación y depuración intermedias
+.debug/
+.debug/**
+dist/
+dist/**
+*.vsix
+
+# Entornos virtuales y caché de Python
 venv/
 venv/**
 .venv/
 .venv/**
 env/
 env/**
-
-# Python cache
 __pycache__/
 *.pyc
 
-# Common editor/temp files
+# Configuración y archivos temporales del editor/sistema
 .vscode/
+.vscode-test/
+.git/
+.gitignore
 .DS_Store
 Thumbs.db
+*.log
+*.tmp
